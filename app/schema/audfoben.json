@@ -1,0 +1,216 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AUDFOBEN - Arquivo de Programa de Benefícios Socioassistenciais",
+  "type": "object",
+  "properties": {
+    "unidadeAuditada": {
+      "type": "integer",
+      "description": "Informar o Código da unidade gestora no eTCE"
+    },
+    "anoReferencia": {
+      "type": "string",
+      "pattern": "^(20)\\d{2}$",
+      "description": "Informar Ano referência do pagamento do benefício, no formato AAAA",
+      "minLength": 4,
+      "maxLength": 4
+    },
+    "mesReferencia": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 12,
+      "description": "Informar Mês referência do pagamento do benefício. Informar número inteiro entre 1 e 12"
+    },
+    "tipoFolha": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2,
+      "description": "Informar o tipo de folha referente ao benefício. Valores possíveis: 1 = Folha ordinária e 2 = Folha Suplementar"
+    },
+    "sequencialArquivo": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Informar o sequencial de arquivo em caso de mais de um arquivo para o mesmo ano/mês/tipo de folha. Informar inteiro com mínimo de 1"
+    },
+    "programaSocial": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Informar o código do programa de benefício socioassistencial cadastrado por meio do Cadastro Auxiliar - eTCE"
+    },
+    "beneficios": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Informar lista com os benefícios pagos do programa socioassistencial, no ano/mês de referência informado no início do arquivo",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cpf": {
+            "type": "string",
+            "minLength": 11,
+            "maxLength": 11,
+            "pattern": "^\\d{11}$",
+            "description": "Informar cpf válido do beneficiário do programa. Apenas números."
+          },
+          "numeroNIS": {
+            "type": "string",
+            "minLength": 11,
+            "maxLength": 11,
+            "pattern": "^\\d{11}$",
+            "description": "Informar número do cadastro único do beneficiário do programa. Apenas números e tamanho de 11 caracteres."
+          },
+          "nome": {
+            "type": "string",
+            "maxLength": 250,
+            "description": "Informar o nome do beneficiário do programa. Tamanho máximo de 250 caracteres."
+          },
+          "sexo": {
+            "type": "string",
+            "enum": ["M", "F"],
+            "description": "Informar o sexo do beneficiário do programa. Valores possíveis: M = masculino e F = Feminino"
+          },
+          "nacionalidade": {
+            "type": "string",
+            "maxLength": 150,
+            "description": "Informar nacionalidade do beneficiário do programa. Tamanho máximo de 150 caracteres."
+          },
+          "dataNascimento": {
+            "type": "string",
+            "format": "date",
+            "description": "Informar a data de nascimento do beneficiário do programa. Formato aceito: AAAA-MM-DD"
+          },
+          "nomeMae": {
+            "type": "string",
+            "maxLength": 250,
+            "description": "Informar o nome da mãe do beneficiário do programa. Tamanho máximo de 250 caracteres."
+          },
+          "enderecoCEP": {
+            "type": "string",
+            "pattern": "^\\d{8}$",
+            "description": "Informar o CEP do beneficiário do programa. Apenas números."
+          },
+          "logradouro": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Informar logradouro do beneficiário. Tamanho máximo de 500 caracteres."
+          },
+          "bairro": {
+            "type": "string",
+            "maxLength": 250,
+            "description": "Informar bairro do beneficiário. Tamanho máximo de 250 caracteres."
+          },
+          "numero": {
+            "type": "string",
+            "maxLength": 50,
+            "description": "Informar número do logradouro do beneficiário. Tamanho máximo de 50 caracteres."
+          },
+          "complemento": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Informar complemento do logradouro do beneficiário. Tamanho máximo de 100 caracteres."
+          },
+          "codigoIBGEMunicipio": {
+            "type": "string",
+            "pattern": "^\\d{7}$",
+            "description": "Informar código do município do beneficiário conforme cadastro no IBGE."
+          },
+          "valorTotalTransferido": {
+            "type": "number",
+            "multipleOf": 0.01,
+            "minimum": 0,
+            "description": "Informar o valor total pago para beneficiário do programa."
+          },
+          "totalPessoasBeneficio": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Informar a quantidade total de pessoas beneficiadas."
+          },
+          "totalDependentesBeneficio": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Informar a quantidade total de dependentes do beneficiário do programa."
+          },
+          "criterios": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "identificadorCriterio": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "valorAssociado": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "aplicavel": {
+                  "type": "string",
+                  "enum": ["S", "N"]
+                }
+              },
+              "required": ["identificadorCriterio", "valorAssociado", "aplicavel"],
+              "additionalProperties": false
+            }
+          },
+          "dependentes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "cpf": {
+                  "type": "string",
+                  "minLength": 11,
+                  "maxLength": 11,
+                  "pattern": "^\\d{11}$"
+                },
+                "nome": {
+                  "type": "string",
+                  "maxLength": 250
+                },
+                "sexo": {
+                  "type": "string",
+                  "enum": ["M", "F"]
+                },
+                "dataNascimento": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "codigoParentesco": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 11
+                }
+              },
+              "required": ["nome", "sexo", "dataNascimento", "codigoParentesco"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "cpf",
+          "nome",
+          "sexo",
+          "dataNascimento",
+          "nacionalidade",
+          "logradouro",
+          "bairro",
+          "codigoIBGEMunicipio",
+          "valorTotalTransferido",
+          "totalPessoasBeneficio",
+          "totalDependentesBeneficio",
+          "criterios"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "unidadeAuditada",
+    "anoReferencia",
+    "mesReferencia",
+    "tipoFolha",
+    "sequencialArquivo",
+    "programaSocial",
+    "beneficios"
+  ],
+  "additionalProperties": false
+}

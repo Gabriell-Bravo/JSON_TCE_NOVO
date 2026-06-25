@@ -1,0 +1,6 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero"><h2>Usuários</h2><p>Administração de acesso por perfil. Perfis de Secretaria devem estar vinculados à Secretaria correspondente.</p></section>
+<div class="card"><h3>Novo usuário</h3><form method="post" action="/usuarios" class="grid three"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div><label>Usuário</label><input name="username" required></div><div><label>Senha</label><input name="password" type="password" required></div><div><label>Perfil</label><select name="role">{% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select></div><div><label>Secretaria vinculada</label><select name="secretaria_id"><option value="">Sem vínculo</option>{% for s in secretarias %}<option value="{{ s.id }}">{{ s.sigla }} - {{ s.nome }}</option>{% endfor %}</select></div><div style="align-self:end"><button class="btn">Criar</button></div></form></div>
+<div class="card"><h3>Usuários cadastrados</h3><table><thead><tr><th>Usuário</th><th>Perfil</th><th>Secretaria</th><th>Ativo</th></tr></thead><tbody>{% for u in users %}<tr><td>{{ u.username }}</td><td>{{ u.role }}</td><td>{{ u.secretaria.sigla if u.secretaria else '-' }}</td><td>{{ 'sim' if u.is_active else 'não' }}</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block public %}
+<main class="login">
+  <div class="hero"><h2>Hub Deliberação 361</h2><p>Acesso restrito ao sistema municipal de benefícios.</p></div>
+  <div class="card">
+    <h3>Login</h3>
+    {% if error %}<div class="flash">{{ error }}</div>{% endif %}
+    <form method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Usuário</label><input name="username" required autofocus>
+      <label>Senha</label><input name="password" type="password" required>
+      <p><button class="btn">Entrar</button></p>
+    </form>
+    <p class="small">Usuário inicial: admin / Admin@12345. Troque em produção.</p>
+  </div>
+</main>
+{% endblock %}

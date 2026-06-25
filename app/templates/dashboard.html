@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block title %}Painel{% endblock %}
+{% block content %}
+<section class="hero"><h2>Painel Executivo</h2><p>Fluxo simplificado: Secretaria gestora cadastra/importa, valida, certifica e gera JSON AUDFOBEN. Não há etapa de Finanças nem validação técnica externa.</p></section>
+<section class="grid cards">
+  <div class="card"><h3>Folhas</h3><div class="metric">{{ total_folhas }}</div></div>
+  <div class="card"><h3>Benefícios lançados</h3><div class="metric">{{ total_itens }}</div></div>
+  <div class="card"><h3>Erros bloqueantes</h3><div class="metric">{{ total_erros }}</div><span class="tag red">impedem certificação/exportação</span></div>
+  <div class="card"><h3>Alertas</h3><div class="metric">{{ total_alertas }}</div><span class="tag amber">exigem análise da gestora</span></div>
+</section>
+<div class="card"><h3>Folhas recentes</h3>
+<table><thead><tr><th>ID</th><th>Programa</th><th>Secretaria</th><th>Competência</th><th>Status</th><th>Ações</th></tr></thead><tbody>
+{% for f in folhas %}<tr><td>{{ f.id }}</td><td>{{ f.programa.nome }}</td><td>{{ f.programa.secretaria.sigla }}</td><td>{{ '%02d'|format(f.mes) }}/{{ f.ano }}</td><td class="status {{ f.status }}">{{ f.status }}</td><td><a class="btn secondary" href="/folhas/{{ f.id }}">Abrir</a></td></tr>{% else %}<tr><td colspan="6">Nenhuma folha cadastrada.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero"><h2>Cadastros Auxiliares Internos</h2><p>Configure Secretarias, Unidades Gestoras e Programas. Usuários de Secretaria visualizam apenas a própria Secretaria.</p></section>
+
+<div class="grid three">
+  {% if user.role == 'ADMIN' %}
+  <div class="card"><h3>Nova Secretaria</h3><form method="post" action="/secretarias"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Nome</label><input name="nome" required><label>Sigla</label><input name="sigla" required><p><button class="btn">Salvar</button></p></form></div>
+  <div class="card"><h3>Nova Unidade Gestora</h3><form method="post" action="/unidades"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Nome</label><input name="nome" required><label>Código e-TCERJ</label><input name="codigo_etce" type="number" min="1" required><label>Secretaria</label><select name="secretaria_id">{% for s in secretarias %}<option value="{{ s.id }}">{{ s.sigla }} - {{ s.nome }}</option>{% endfor %}</select><p><button class="btn">Salvar</button></p></form></div>
+  {% endif %}
+  {% if user.role in ['ADMIN','SECRETARIA_GESTOR'] %}
+  <div class="card"><h3>Novo Programa</h3><form method="post" action="/programas"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Nome</label><input name="nome" required><label>Secretaria</label><select name="secretaria_id">{% for s in secretarias %}<option value="{{ s.id }}">{{ s.sigla }}</option>{% endfor %}</select><label>Unidade Gestora</label><select name="unidade_id">{% for u in unidades %}<option value="{{ u.id }}">{{ u.codigo_etce }} - {{ u.nome }}</option>{% endfor %}</select><label>Código do programa no e-TCERJ</label><input name="codigo_etce" type="number" min="1"><label>Norma instituidora</label><input name="norma_instituidora"><label><input type="checkbox" name="vigente" checked style="width:auto"> Vigente</label><label><input type="checkbox" name="homologado_etce" style="width:auto"> Homologado no e-TCERJ</label><label>Critérios padrão JSON</label><textarea name="criterios_padrao_json">[{"identificadorCriterio":1,"valorAssociado":"Critério social cadastrado","aplicavel":"S"}]</textarea><p><button class="btn">Salvar</button></p></form></div>
+  {% endif %}
+</div>
+
+<div class="card"><h3>Programas cadastrados</h3><table><thead><tr><th>ID</th><th>Programa</th><th>Secretaria</th><th>UG</th><th>Cód. e-TCE</th><th>Homologado</th><th>Vigente</th></tr></thead><tbody>{% for p in programas %}<tr><td>{{ p.id }}</td><td>{{ p.nome }}</td><td>{{ p.secretaria.sigla }}</td><td>{{ p.unidade.codigo_etce }}</td><td>{{ p.codigo_etce or '-' }}</td><td>{% if p.homologado_etce %}<span class="tag green">sim</span>{% else %}<span class="tag red">não</span>{% endif %}</td><td>{{ 'sim' if p.vigente else 'não' }}</td></tr>{% else %}<tr><td colspan="7">Nenhum programa cadastrado.</td></tr>{% endfor %}</tbody></table></div>
+
+<div class="card"><h3>Secretarias e UGs</h3><div class="grid two"><table><thead><tr><th>Sigla</th><th>Nome</th></tr></thead><tbody>{% for s in secretarias %}<tr><td>{{ s.sigla }}</td><td>{{ s.nome }}</td></tr>{% else %}<tr><td colspan="2">Nenhuma Secretaria disponível para este usuário.</td></tr>{% endfor %}</tbody></table><table><thead><tr><th>Código</th><th>UG</th><th>Secretaria</th></tr></thead><tbody>{% for u in unidades %}<tr><td>{{ u.codigo_etce }}</td><td>{{ u.nome }}</td><td>{{ u.secretaria.sigla }}</td></tr>{% else %}<tr><td colspan="3">Nenhuma UG disponível para este usuário.</td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}

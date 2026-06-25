@@ -1,0 +1,140 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <h2>Folha #{{ folha.id }} — {{ folha.programa.nome }}</h2>
+  <p>Competência {{ '%02d'|format(folha.mes) }}/{{ folha.ano }} | UG {{ folha.unidade.codigo_etce }} | Tipo {{ folha.tipo_folha }} (1=ordinária, 2=suplementar) | Sequencial {{ folha.sequencial }} | {{ folha.programa.secretaria.sigla }}</p>
+</section>
+
+<div class="grid cards">
+  <div class="card"><h3>Status</h3><div class="metric status {{ folha.status }}">{{ folha.status|status_label }}</div></div>
+  <div class="card"><h3>Beneficiários</h3><div class="metric">{{ folha.itens|length }}</div></div>
+  <div class="card"><h3>Programa e-TCERJ</h3><div class="metric">{{ folha.programa.codigo_etce or '-' }}</div>{% if folha.programa.homologado_etce %}<span class="tag green">homologado</span>{% else %}<span class="tag red">pendente homologação</span>{% endif %}</div>
+  <div class="card"><h3>Certificação</h3><p>Gestor do benefício: {% if folha.secretaria_certified_by %}<span class="tag green">certificada</span>{% else %}<span class="tag amber">aguardando gestor</span>{% endif %}</p><p class="small">Fluxo interno da Secretaria: sem etapa de Finanças ou validação técnica da CGM.</p></div>
+</div>
+
+<div class="card">
+  <h3>Ações da folha</h3>
+  <div class="actions">
+    {% if user.role in ['ADMIN','SECRETARIA_OPERADOR','SECRETARIA_GESTOR','SECRETARIA_ENVIO'] %}
+    <form method="post" action="/folhas/{{ folha.id }}/validar" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn amber">Executar validação</button></form>
+    {% endif %}
+    {% if user.role in ['ADMIN','SECRETARIA_GESTOR'] %}
+    <form method="post" action="/folhas/{{ folha.id }}/certificar-gestor" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn secondary">Certificar folha (gestor)</button></form>
+    {% endif %}
+    {% if user.role in ['ADMIN','SECRETARIA_ENVIO'] %}
+    <form method="post" action="/folhas/{{ folha.id }}/exportar" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn">Gerar JSON AUDFOBEN</button></form>
+    {% endif %}
+    <a class="btn secondary" href="/folhas/{{ folha.id }}/exportar-planilha">Exportar planilha atual (.xlsx)</a>
+  </div>
+  <p class="small"><strong>Ordem recomendada:</strong> importar ou lançar dados → validar → gestor certifica → perfil de envio gera o JSON.</p>
+</div>
+
+<div class="grid two">
+{% if user.role in ['ADMIN','SECRETARIA_OPERADOR','SECRETARIA_GESTOR'] %}
+<div class="card">
+  <h3>Importar planilha</h3>
+  <form method="post" action="/folhas/{{ folha.id }}/importar" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Arquivo .csv ou .xlsx</label>
+    <input type="file" name="arquivo" accept=".csv,.xlsx" required>
+    <p class="small">Use a coluna <strong>item_id</strong> para atualizar registros sem duplicar. Sem item_id, o sistema atualiza pelo CPF se já existir na folha.</p>
+    <p>
+      <button class="btn">Importar</button>
+      <a class="btn secondary" href="/modelo-importacao">Modelo CSV</a>
+      <a class="btn secondary" href="/modelo-importacao.xlsx">Modelo Excel</a>
+    </p>
+  </form>
+</div>
+{% endif %}
+<div class="card">
+  <h3>Remessas geradas</h3>
+  <table>
+    <thead><tr><th>Arquivo</th><th>SHA-256</th><th>Tamanho</th><th>Download</th></tr></thead>
+    <tbody>
+      {% for r in remessas %}
+      <tr>
+        <td>{{ r.filename }}</td>
+        <td class="small">{{ r.sha256[:16] }}…</td>
+        <td>{{ r.size_bytes }} bytes</td>
+        <td><a class="btn secondary" href="/remessas/{{ r.id }}/download">Baixar JSON</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">Nenhuma remessa gerada.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+</div>
+
+{% if user.role in ['ADMIN','SECRETARIA_OPERADOR','SECRETARIA_GESTOR'] %}
+<div class="card"><h3>Adicionar beneficiário manualmente</h3>
+<form method="post" action="/folhas/{{ folha.id }}/itens" class="grid three">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<div><label>CPF</label><input name="cpf" required placeholder="Somente números ou com máscara"></div>
+<div><label>NIS (opcional)</label><input name="numeroNIS" placeholder="11 dígitos, se houver CadÚnico"></div>
+<div><label>Nome completo</label><input name="nome" required></div>
+<div><label>Sexo</label><select name="sexo"><option value="F">F</option><option value="M">M</option></select></div>
+<div><label>Data nascimento</label><input name="dataNascimento" placeholder="AAAA-MM-DD" required></div>
+<div><label>Nacionalidade (país)</label><input name="nacionalidade" value="Brasil" required></div>
+<div><label>Nome da mãe</label><input name="nomeMae"></div>
+<div><label>CEP</label><input name="enderecoCEP"></div>
+<div><label>Código IBGE Município</label><input name="codigoIBGEMunicipio" value="3305505" required></div>
+<div><label>Logradouro</label><input name="logradouro" required></div>
+<div><label>Bairro</label><input name="bairro" required></div>
+<div><label>Número</label><input name="numero"></div>
+<div><label>Valor transferido</label><input name="valorTotalTransferido" value="0.00" required></div>
+<div><label>Total pessoas</label><input type="number" name="totalPessoasBeneficio" value="1" min="1" required></div>
+<div><label>Total dependentes</label><input type="number" name="totalDependentesBeneficio" value="0" min="0" required></div>
+<div><label>Critério ID (e-TCERJ)</label><input name="criterio_id" value="1"></div>
+<div><label>Valor do critério</label><input name="criterio_valor" value="Critério social cadastrado"></div>
+<div><label>Aplicável</label><select name="criterio_aplicavel"><option value="S">S</option><option value="N">N</option></select></div>
+<div style="grid-column:1/-1"><label>Critérios JSON (opcional, para vários critérios)</label><textarea name="criterios_json" placeholder='[{"identificadorCriterio":1,"valorAssociado":"...","aplicavel":"S"}]'></textarea></div>
+<div style="grid-column:1/-1"><label>Dependentes JSON</label><textarea name="dependentes_json">[]</textarea></div>
+<div style="grid-column:1/-1"><label>Evidência / processo administrativo</label><input name="evidencia" placeholder="Processo, despacho ou comprovante de pagamento"></div>
+<div><button class="btn">Adicionar</button></div>
+</form></div>
+{% endif %}
+
+<div class="card">
+  <h3>Beneficiários da folha</h3>
+  <table>
+    <thead><tr><th>ID</th><th>CPF</th><th>Nome</th><th>Valor</th><th>Pessoas</th><th>Dep.</th><th>Evidência</th><th>Ação</th></tr></thead>
+    <tbody>
+      {% for i in folha.itens %}
+      <tr>
+        <td>{{ i.id }}</td>
+        <td>{{ i.beneficiario.cpf|mask_cpf(mask_sensitive) }}</td>
+        <td>{{ i.beneficiario.nome }}</td>
+        <td>{{ '%.2f'|format(i.valor_total_transferido) }}</td>
+        <td>{{ i.total_pessoas_beneficio }}</td>
+        <td>{{ i.total_dependentes_beneficio }}</td>
+        <td>{{ i.evidencia or '-' }}</td>
+        <td>{% if user.role in ['ADMIN','SECRETARIA_OPERADOR','SECRETARIA_GESTOR'] %}<form method="post" action="/folhas/{{ folha.id }}/itens/{{ i.id }}/delete" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn red">Excluir</button></form>{% else %}-{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8">Nenhum beneficiário cadastrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Resultado da validação</h3>
+  <p class="small"><span class="tag red">Bloqueante</span> impede certificação e geração do JSON. <span class="tag amber">Alerta</span> permite continuar, mas exige conferência.</p>
+  <table>
+    <thead><tr><th>Tipo</th><th>Ocorrência</th><th>Registro</th><th>Descrição</th></tr></thead>
+    <tbody>
+      {% for e in issues %}
+      <tr>
+        <td>{% if e.severity == 'BLOCK' %}<span class="tag red">Bloqueante</span>{% else %}<span class="tag amber">Alerta</span>{% endif %}</td>
+        <td>{{ e.code|issue_label }}</td>
+        <td>{{ e.item_id or '-' }}</td>
+        <td>{{ e.message }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">Execute a validação para verificar pendências.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

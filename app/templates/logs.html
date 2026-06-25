@@ -1,0 +1,5 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero"><h2>Auditoria</h2><p>Registro de ações realizadas no sistema.</p></section>
+<div class="card"><table><thead><tr><th>Data</th><th>Usuário</th><th>Ação</th><th>Entidade</th><th>ID</th><th>Detalhes</th><th>IP</th></tr></thead><tbody>{% for l in logs %}<tr><td>{{ l.created_at }}</td><td>{{ l.user.username if l.user else '-' }}</td><td>{{ l.action }}</td><td>{{ l.entity }}</td><td>{{ l.entity_id or '-' }}</td><td>{{ l.details or '-' }}</td><td>{{ l.ip or '-' }}</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}
