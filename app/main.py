@@ -21,11 +21,15 @@ from .services import (
     build_programa_criterios_json,
     exportar_folha_xlsx,
     exportar_remessa,
+    folha_edicao_bloqueada,
     gerar_modelo_csv,
     gerar_modelo_xlsx,
     gerar_modelo_programa_xlsx,
     importar_itens,
     make_item_from_form,
+    migrate_programa_criterios_from_json,
+    persist_programa_criterios,
+    validar_sequencial_nova_folha,
     validate_folha,
 )
 
@@ -74,8 +78,10 @@ def init_db() -> None:
                 norma_instituidora="Norma a informar",
                 vigente=True,
                 homologado_etce=False,
-                criterios_padrao_json='[{"identificadorCriterio":1,"valorAssociado":"Critério social cadastrado","aplicavel":"S"}]',
+                criterios_padrao_json='[{"identificadorCriterio":11,"nome":"Possuir inscrição no CadÚnico","tipoDado":"Sim/Não","aplicavel":"S"}]',
             ))
+        db.commit()
+        migrate_programa_criterios_from_json(db)
         db.commit()
     finally:
         db.close()
@@ -305,6 +311,17 @@ def criar_programa(
     db.add(p)
     db.commit()
     db.refresh(p)
+    persist_programa_criterios(
+        db,
+        p,
+        criterio_ids,
+        limite_inferior=limite_inferior,
+        limite_superior=limite_superior,
+        vigencia_inicio=criterio_vigencia_inicio,
+        vigencia_fim=criterio_vigencia_fim,
+        prazo_indeterminado=(prazo_indeterminado == "on"),
+    )
+    db.commit()
     audit(db, request, user, "CRIAR", "Programa", p.id, p.nome)
     return RedirectResponse("/cadastros", status_code=303)
 
@@ -323,6 +340,10 @@ def criar_folha(request: Request, db: Annotated[Session, Depends(get_db)], user:
     if not programa:
         raise HTTPException(404, "Programa não localizado.")
     require_program_access(user, programa)
+    try:
+        validar_sequencial_nova_folha(db, programa.id, ano, mes, tipo_folha, sequencial)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     folha = Folha(programa_id=programa.id, unidade_id=programa.unidade_id, ano=ano, mes=mes, tipo_folha=tipo_folha, sequencial=sequencial, created_by=user.id)
     db.add(folha)
     try:
@@ -350,6 +371,9 @@ async def adicionar_item(request: Request, folha_id: int, db: Annotated[Session,
     folha = db.get(Folha, folha_id)
     if not folha: raise HTTPException(404, "Folha não localizada.")
     require_folha_access(user, folha)
+    bloqueio = folha_edicao_bloqueada(db, folha)
+    if bloqueio:
+        raise HTTPException(400, bloqueio)
     try:
         item = make_item_from_form(db, folha, dict(form))
         folha.secretaria_certified_by = None
@@ -367,6 +391,9 @@ def deletar_item(request: Request, folha_id: int, item_id: int, db: Annotated[Se
     folha = db.get(Folha, folha_id)
     if not folha: raise HTTPException(404, "Folha não localizada.")
     require_folha_access(user, folha)
+    bloqueio = folha_edicao_bloqueada(db, folha)
+    if bloqueio:
+        raise HTTPException(400, bloqueio)
     item = db.get(FolhaItem, item_id)
     if item and item.folha_id == folha_id:
         db.delete(item)
@@ -382,6 +409,9 @@ async def importar(request: Request, folha_id: int, db: Annotated[Session, Depen
     folha = db.get(Folha, folha_id)
     if not folha: raise HTTPException(404, "Folha não localizada.")
     require_folha_access(user, folha)
+    bloqueio = folha_edicao_bloqueada(db, folha)
+    if bloqueio:
+        raise HTTPException(400, bloqueio)
     data = await arquivo.read()
     fname = (arquivo.filename or "").lower()
     if not fname.endswith((".csv", ".xlsx")):
@@ -454,6 +484,23 @@ def download_remessa(remessa_id: int, db: Annotated[Session, Depends(get_db)], u
     path = EXPORT_DIR / remessa.filename
     if not path.exists(): raise HTTPException(404, "Arquivo não encontrado no servidor.")
     return FileResponse(path, media_type="application/json", filename=remessa.filename)
+
+
+@app.post("/remessas/{remessa_id}/marcar-enviada")
+def marcar_remessa_enviada(request: Request, remessa_id: int, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)], csrf_token: str = Form(...)):
+    validate_csrf(request, csrf_token)
+    require_role(user, EXPORT_ROLES)
+    remessa = db.get(Remessa, remessa_id)
+    if not remessa:
+        raise HTTPException(404, "Remessa não localizada.")
+    require_folha_access(user, remessa.folha)
+    if remessa.status not in {"GERADA", "ERRO"}:
+        raise HTTPException(400, f"Remessa já está com status {remessa.status}.")
+    remessa.status = "ENVIADA"
+    db.commit()
+    audit(db, request, user, "MARCAR_ENVIADA", "Remessa", remessa.id, remessa.filename)
+    request.session["flash"] = "Remessa marcada como enviada ao e-TCERJ. A folha ficará bloqueada para edição."
+    return RedirectResponse(f"/folhas/{remessa.folha_id}", status_code=303)
 
 
 @app.get("/modelo-importacao")

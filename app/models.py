@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -46,6 +47,23 @@ class Programa(Base):
     criterios_padrao_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     secretaria = relationship("Secretaria")
     unidade = relationship("UnidadeGestora")
+    criterios_vinculados = relationship("ProgramaCriterio", cascade="all, delete-orphan", back_populates="programa")
+
+
+class ProgramaCriterio(Base):
+    __tablename__ = "programa_criterios"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    programa_id: Mapped[int] = mapped_column(ForeignKey("programas.id"), nullable=False, index=True)
+    identificador_criterio: Mapped[int] = mapped_column(Integer, nullable=False)
+    nome: Mapped[str] = mapped_column(String(250), nullable=False)
+    categoria: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    tipo_dado: Mapped[str] = mapped_column(String(30), nullable=False)
+    limite_inferior: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    limite_superior: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    vigencia_inicio: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    vigencia_fim: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    prazo_indeterminado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    programa = relationship("Programa", back_populates="criterios_vinculados")
 
 class Beneficiario(Base):
     __tablename__ = "beneficiarios"
@@ -92,7 +110,7 @@ class FolhaItem(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     folha_id: Mapped[int] = mapped_column(ForeignKey("folhas.id"), nullable=False, index=True)
     beneficiario_id: Mapped[int] = mapped_column(ForeignKey("beneficiarios.id"), nullable=False)
-    valor_total_transferido: Mapped[float] = mapped_column(Float, nullable=False)
+    valor_total_transferido: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     total_pessoas_beneficio: Mapped[int] = mapped_column(Integer, nullable=False)
     total_dependentes_beneficio: Mapped[int] = mapped_column(Integer, nullable=False)
     criterios_json: Mapped[str] = mapped_column(Text, nullable=False)
@@ -139,6 +157,7 @@ class Remessa(Base):
     filename: Mapped[str] = mapped_column(String(300), nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="GERADA", nullable=False)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     folha = relationship("Folha")

@@ -17,7 +17,8 @@ from sqlalchemy import select
 
 from app.database import Base, SessionLocal, engine
 from app.main import app, init_db
-from app.models import Programa, Secretaria, UnidadeGestora, User
+from app.models import Programa, ProgramaCriterio, Secretaria, UnidadeGestora, User
+from app.services import build_programa_criterios_json, persist_programa_criterios
 from app.security import hash_password
 
 
@@ -55,7 +56,11 @@ def secretaria_setup(db):
     programa.codigo_etce = 100
     programa.homologado_etce = True
     programa.vigente = True
+    if not programa.criterios_vinculados:
+        persist_programa_criterios(db, programa, [11], prazo_indeterminado=True)
+        programa.criterios_padrao_json = build_programa_criterios_json([11], prazo_indeterminado=True)
     db.commit()
+    db.refresh(programa)
     return s, ug, programa
 
 

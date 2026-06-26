@@ -27,10 +27,11 @@ def test_criterios_exigem_aplicavel_s():
 
 
 def test_normalize_money_formats():
+    from decimal import Decimal
     from app.validators import normalize_money
-    assert normalize_money("450.00") == 450.0
-    assert normalize_money("1.234,56") == 1234.56
-    assert normalize_money("300,00") == 300.0
+    assert normalize_money("450.00") == Decimal("450.00")
+    assert normalize_money("1.234,56") == Decimal("1234.56")
+    assert normalize_money("300,00") == Decimal("300.00")
 
 
 def test_nacionalidade_adjetivo_detectado():
@@ -42,3 +43,23 @@ def test_nacionalidade_adjetivo_detectado():
 def test_dependente_maior_exige_cpf():
     deps = [{"nome":"João", "sexo":"M", "dataNascimento":"1990-01-01", "codigoParentesco":3}]
     assert any("CPF" in msg for msg in validar_dependentes(deps, 1))
+
+
+def test_criterio_sim_nao_valor():
+    from app.validators import validar_valor_associado_tipo
+    assert validar_valor_associado_tipo("SIM", "Sim/Não") == []
+    assert validar_valor_associado_tipo("talvez", "Sim/Não") != []
+
+
+def test_criterio_vigencia_competencia():
+    from app.validators import criterio_vigente_na_competencia, validar_criterios_do_programa
+    meta = {"identificadorCriterio": 11, "tipoDado": "Sim/Não", "vigenciaInicio": "2026-01-01", "vigenciaFim": "2026-06-30", "prazoIndeterminado": False}
+    assert criterio_vigente_na_competencia(meta, "2026", 3) is True
+    assert criterio_vigente_na_competencia(meta, "2026", 8) is False
+    erros = validar_criterios_do_programa(
+        [{"identificadorCriterio": 11, "valorAssociado": "SIM", "aplicavel": "S"}],
+        [meta],
+        "2026",
+        8,
+    )
+    assert any("vigente" in e for e in erros)

@@ -50,20 +50,27 @@
 <div class="card">
   <h3>Remessas geradas</h3>
   <table>
-    <thead><tr><th>Arquivo</th><th>SHA-256</th><th>Tamanho</th><th>Download</th></tr></thead>
+    <thead><tr><th>Arquivo</th><th>Status</th><th>SHA-256</th><th>Tamanho</th><th>Ações</th></tr></thead>
     <tbody>
       {% for r in remessas %}
       <tr>
         <td>{{ r.filename }}</td>
+        <td><span class="tag {% if r.status == 'ACEITA' %}green{% elif r.status == 'ENVIADA' %}amber{% elif r.status == 'ERRO' %}red{% else %}blue{% endif %}">{{ r.status }}</span></td>
         <td class="small">{{ r.sha256[:16] }}…</td>
         <td>{{ r.size_bytes }} bytes</td>
-        <td><a class="btn secondary" href="/remessas/{{ r.id }}/download">Baixar JSON</a></td>
+        <td>
+          <a class="btn secondary" href="/remessas/{{ r.id }}/download">Baixar JSON</a>
+          {% if user.role in ['ADMIN','SECRETARIA_GESTOR'] and r.status in ['GERADA','ERRO'] %}
+          <form method="post" action="/remessas/{{ r.id }}/marcar-enviada" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn amber">Marcar enviada</button></form>
+          {% endif %}
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="4">Nenhuma remessa gerada.</td></tr>
+      <tr><td colspan="5">Nenhuma remessa gerada.</td></tr>
       {% endfor %}
     </tbody>
   </table>
+  <p class="small">Após marcar como <strong>ENVIADA</strong>, a folha fica bloqueada para edição. Para correção, crie nova folha com sequencial incrementado.</p>
 </div>
 </div>
 

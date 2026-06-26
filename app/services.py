@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+from decimal import Decimal
 from typing import Any
 
 from jsonschema import Draft7Validator, FormatChecker
@@ -13,7 +14,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .config import EXPORT_DIR, MAX_UPLOAD_SIZE
-from .models import Beneficiario, Folha, FolhaItem, Programa, Remessa, User, ValidationIssue
+from .models import Beneficiario, Folha, FolhaItem, Programa, ProgramaCriterio, Remessa, User, ValidationIssue
 from .schema_audfoben import AUDFOBEN_SCHEMA
 from .catalogos import CRITERIOS_ELEGIBILIDADE, criterio_por_id
 from .validators import (
@@ -27,6 +28,7 @@ from .validators import (
     parse_json_array,
     validar_beneficiario_basico,
     validar_criterios,
+    validar_criterios_do_programa,
     validar_dependentes,
 )
 
@@ -60,12 +62,21 @@ def friendly_schema_message(error_message: str) -> str:
     return error_message
 
 
-def _programa_criterios(programa: Programa) -> list[dict[str, Any]]:
-    """Retorna os critérios vinculados ao programa.
+def _criterio_dict_from_row(c: ProgramaCriterio) -> dict[str, Any]:
+    return {
+        "identificadorCriterio": c.identificador_criterio,
+        "nome": c.nome,
+        "categoria": c.categoria,
+        "tipoDado": c.tipo_dado,
+        "limiteInferior": c.limite_inferior or "",
+        "limiteSuperior": c.limite_superior or "",
+        "vigenciaInicio": c.vigencia_inicio or "",
+        "vigenciaFim": c.vigencia_fim or "",
+        "prazoIndeterminado": c.prazo_indeterminado,
+    }
 
-    O sistema guarda metadados internos para ajudar a Secretaria a preencher a planilha,
-    mas o JSON AUDFOBEN só recebe identificadorCriterio, valorAssociado e aplicavel.
-    """
+
+def _criterios_from_json(programa: Programa) -> list[dict[str, Any]]:
     try:
         data = json.loads(programa.criterios_padrao_json or "[]")
     except Exception:
@@ -73,6 +84,116 @@ def _programa_criterios(programa: Programa) -> list[dict[str, Any]]:
     if isinstance(data, list) and data:
         return [c for c in data if isinstance(c, dict)]
     return []
+
+
+def _programa_criterios(programa: Programa) -> list[dict[str, Any]]:
+    if programa.criterios_vinculados:
+        return [_criterio_dict_from_row(c) for c in programa.criterios_vinculados]
+    return _criterios_from_json(programa)
+
+
+def persist_programa_criterios(
+    db: Session,
+    programa: Programa,
+    criterio_ids: list[int | str],
+    limite_inferior: str = "",
+    limite_superior: str = "",
+    vigencia_inicio: str = "",
+    vigencia_fim: str = "",
+    prazo_indeterminado: bool = False,
+) -> None:
+    programa.criterios_vinculados.clear()
+    db.flush()
+    for raw in criterio_ids:
+        if raw in (None, ""):
+            continue
+        catalogo = criterio_por_id(int(raw))
+        if not catalogo:
+            continue
+        db.add(ProgramaCriterio(
+            programa_id=programa.id,
+            identificador_criterio=int(catalogo["id"]),
+            nome=catalogo["nome"],
+            categoria=catalogo.get("categoria"),
+            tipo_dado=catalogo["tipo_dado"],
+            limite_inferior=clean_text(limite_inferior) or None,
+            limite_superior=clean_text(limite_superior) or None,
+            vigencia_inicio=clean_text(vigencia_inicio) or None,
+            vigencia_fim=None if prazo_indeterminado else (clean_text(vigencia_fim) or None),
+            prazo_indeterminado=bool(prazo_indeterminado),
+        ))
+
+
+def migrate_programa_criterios_from_json(db: Session) -> None:
+    programas = db.scalars(select(Programa)).all()
+    for programa in programas:
+        if programa.criterios_vinculados:
+            continue
+        for meta in _criterios_from_json(programa):
+            cid = int(meta.get("identificadorCriterio") or meta.get("id") or 0)
+            if cid <= 0:
+                continue
+            catalogo = criterio_por_id(cid) or {}
+            db.add(ProgramaCriterio(
+                programa_id=programa.id,
+                identificador_criterio=cid,
+                nome=meta.get("nome") or catalogo.get("nome") or f"Critério {cid}",
+                categoria=meta.get("categoria") or catalogo.get("categoria"),
+                tipo_dado=meta.get("tipoDado") or meta.get("tipo_dado") or catalogo.get("tipo_dado") or "Sim/Não",
+                limite_inferior=meta.get("limiteInferior") or meta.get("limite_inferior"),
+                limite_superior=meta.get("limiteSuperior") or meta.get("limite_superior"),
+                vigencia_inicio=meta.get("vigenciaInicio") or meta.get("vigencia_inicio"),
+                vigencia_fim=meta.get("vigenciaFim") or meta.get("vigencia_fim"),
+                prazo_indeterminado=bool(meta.get("prazoIndeterminado") or meta.get("prazo_indeterminado")),
+            ))
+
+
+def folha_edicao_bloqueada(db: Session, folha: Folha) -> str | None:
+    remessa = db.scalar(
+        select(Remessa)
+        .where(Remessa.folha_id == folha.id, Remessa.status.in_(["ENVIADA", "ACEITA"]))
+        .order_by(Remessa.created_at.desc())
+    )
+    if remessa:
+        return f"Folha bloqueada para edição: remessa marcada como {remessa.status}."
+    return None
+
+
+def validar_sequencial_nova_folha(
+    db: Session,
+    programa_id: int,
+    ano: str,
+    mes: int,
+    tipo_folha: int,
+    sequencial: int,
+) -> None:
+    if sequencial < 1:
+        raise ValueError("O sequencial do arquivo deve ser no mínimo 1.")
+    existentes = db.scalars(
+        select(Folha.sequencial).where(
+            Folha.programa_id == programa_id,
+            Folha.ano == ano,
+            Folha.mes == mes,
+            Folha.tipo_folha == tipo_folha,
+        )
+    ).all()
+    if sequencial == 1 and not existentes:
+        return
+    if sequencial > 1:
+        anterior = db.scalar(
+            select(Folha.id).where(
+                Folha.programa_id == programa_id,
+                Folha.ano == ano,
+                Folha.mes == mes,
+                Folha.tipo_folha == tipo_folha,
+                Folha.sequencial == sequencial - 1,
+            )
+        )
+        if not anterior:
+            raise ValueError(
+                f"Para usar sequencial {sequencial}, deve existir folha com sequencial {sequencial - 1} "
+                f"na mesma competência, programa e tipo de folha."
+            )
 
 
 def criterios_from_program_columns(programa: Programa, form: dict[str, Any]) -> list[dict[str, Any]]:
@@ -230,7 +351,7 @@ def build_beneficio_json(item: FolhaItem) -> dict[str, Any]:
         "logradouro": b.logradouro,
         "bairro": b.bairro,
         "codigoIBGEMunicipio": b.codigo_ibge_municipio,
-        "valorTotalTransferido": round(float(item.valor_total_transferido), 2),
+        "valorTotalTransferido": float(Decimal(item.valor_total_transferido).quantize(Decimal("0.01"))),
         "totalPessoasBeneficio": int(item.total_pessoas_beneficio),
         "totalDependentesBeneficio": int(item.total_dependentes_beneficio),
         "criterios": json.loads(item.criterios_json or "[]"),
@@ -301,6 +422,43 @@ def validate_folha(db: Session, folha: Folha) -> tuple[int, int]:
                 "Folha suplementar (tipo 2) exige folha ordinária (tipo 1) na mesma competência e programa.",
             )
 
+    if folha.sequencial > 1:
+        anterior = db.scalar(
+            select(Folha).where(
+                Folha.programa_id == folha.programa_id,
+                Folha.ano == folha.ano,
+                Folha.mes == folha.mes,
+                Folha.tipo_folha == folha.tipo_folha,
+                Folha.sequencial == folha.sequencial - 1,
+            )
+        )
+        if not anterior:
+            add_issue(
+                db, folha.id, None, "BLOCK", "SEQUENCIAL_INVALIDO",
+                f"Sequencial {folha.sequencial} exige folha anterior com sequencial {folha.sequencial - 1}.",
+            )
+
+    remessa_mesma_comp = db.scalar(
+        select(Remessa)
+        .join(Folha)
+        .where(
+            Folha.programa_id == folha.programa_id,
+            Folha.ano == folha.ano,
+            Folha.mes == folha.mes,
+            Folha.tipo_folha == folha.tipo_folha,
+            Folha.sequencial == folha.sequencial,
+            Folha.id != folha.id,
+            Remessa.status.in_(["GERADA", "ENVIADA", "ACEITA"]),
+        )
+    )
+    if remessa_mesma_comp:
+        add_issue(
+            db, folha.id, None, "BLOCK", "SEQUENCIAL_REUTILIZADO",
+            "Já existe remessa para outra folha com o mesmo sequencial nesta competência. Use o próximo sequencial para correção.",
+        )
+
+    metadados_criterios = _programa_criterios(programa)
+
     cpf_count: dict[str, int] = {}
     for item in folha.itens:
         cpf_count[item.beneficiario.cpf] = cpf_count.get(item.beneficiario.cpf, 0) + 1
@@ -327,6 +485,8 @@ def validate_folha(db: Session, folha: Folha) -> tuple[int, int]:
             add_issue(db, folha.id, item.id, "BLOCK", "CRITERIO_INVALIDO", "Critérios em formato inválido.")
         for msg in validar_criterios(criterios):
             add_issue(db, folha.id, item.id, "BLOCK", "CRITERIO_INVALIDO", msg)
+        for msg in validar_criterios_do_programa(criterios, metadados_criterios, folha.ano, int(folha.mes)):
+            add_issue(db, folha.id, item.id, "BLOCK", "CRITERIO_PROGRAMA", msg)
         try:
             dependentes = json.loads(item.dependentes_json or "[]")
         except Exception:
@@ -364,7 +524,14 @@ def exportar_remessa(db: Session, folha: Folha, user: User | None) -> Remessa:
     raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
     path.write_bytes(raw)
     sha = hashlib.sha256(raw).hexdigest()
-    remessa = Remessa(folha_id=folha.id, filename=filename, sha256=sha, size_bytes=len(raw), created_by=user.id if user else None)
+    remessa = Remessa(
+        folha_id=folha.id,
+        filename=filename,
+        sha256=sha,
+        size_bytes=len(raw),
+        status="GERADA",
+        created_by=user.id if user else None,
+    )
     folha.status = "GERADA"
     db.add(remessa)
     db.commit()
@@ -385,7 +552,8 @@ def _validate_headers(headers: list[str]) -> list[str]:
 
 def read_upload_table(filename: str, data: bytes) -> tuple[list[str], list[dict[str, Any]]]:
     if len(data) > MAX_UPLOAD_SIZE:
-        raise ValueError("Arquivo excede o limite de 10 MB.")
+        mb = MAX_UPLOAD_SIZE // (1024 * 1024)
+        raise ValueError(f"Arquivo excede o limite de {mb} MB para importação.")
     lower = filename.lower()
     if not (lower.endswith(".csv") or lower.endswith(".xlsx")):
         raise ValueError("Formato inválido. Envie arquivo .csv ou .xlsx.")
@@ -592,7 +760,7 @@ def exportar_folha_xlsx(folha: Folha) -> bytes:
             "numero": b.numero or "",
             "complemento": b.complemento or "",
             "codigoIBGEMunicipio": b.codigo_ibge_municipio,
-            "valorTotalTransferido": f"{item.valor_total_transferido:.2f}",
+            "valorTotalTransferido": f"{Decimal(item.valor_total_transferido).quantize(Decimal('0.01'))}",
             "totalPessoasBeneficio": str(item.total_pessoas_beneficio),
             "totalDependentesBeneficio": str(item.total_dependentes_beneficio),
             "criterio_id": str(primeiro.get("identificadorCriterio", "")),

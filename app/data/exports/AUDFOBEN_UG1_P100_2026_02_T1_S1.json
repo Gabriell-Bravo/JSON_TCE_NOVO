@@ -1,0 +1,30 @@
+{
+  "unidadeAuditada": 1,
+  "anoReferencia": "2026",
+  "mesReferencia": 2,
+  "tipoFolha": 1,
+  "sequencialArquivo": 1,
+  "programaSocial": 100,
+  "beneficios": [
+    {
+      "cpf": "52998224725",
+      "nome": "MARIA DA SILVA",
+      "sexo": "F",
+      "dataNascimento": "1990-01-01",
+      "nacionalidade": "Brasil",
+      "logradouro": "Rua A",
+      "bairro": "Centro",
+      "codigoIBGEMunicipio": "3305505",
+      "valorTotalTransferido": 300.0,
+      "totalPessoasBeneficio": 1,
+      "totalDependentesBeneficio": 0,
+      "criterios": [
+        {
+          "identificadorCriterio": 11,
+          "valorAssociado": "SIM",
+          "aplicavel": "S"
+        }
+      ]
+    }
+  ]
+}

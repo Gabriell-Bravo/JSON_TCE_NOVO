@@ -1,7 +1,7 @@
 import csv
 import io
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.models import Folha, FolhaItem, Remessa, Secretaria
 from app.services import build_folha_json, gerar_modelo_xlsx, importar_itens, validate_folha
@@ -9,14 +9,19 @@ from tests.conftest import create_user, csrf_from, login_user
 
 
 def _criar_folha(db, programa, ug, user_id):
-    seq = (db.scalar(select(func.count()).select_from(Folha)) or 0) + 1
+    used_meses = set(
+        db.scalars(
+            select(Folha.mes).where(Folha.programa_id == programa.id, Folha.ano == "2026", Folha.tipo_folha == 1)
+        ).all()
+    )
+    mes = next((m for m in range(1, 13) if m not in used_meses), 1)
     folha = Folha(
         programa_id=programa.id,
         unidade_id=ug.id,
         ano="2026",
-        mes=((seq - 1) % 12) + 1,
+        mes=mes,
         tipo_folha=1,
-        sequencial=seq,
+        sequencial=1,
         created_by=user_id,
     )
     db.add(folha)
@@ -38,8 +43,8 @@ def _item_form():
         "valorTotalTransferido": "300.00",
         "totalPessoasBeneficio": "1",
         "totalDependentesBeneficio": "0",
-        "criterio_id": "1",
-        "criterio_valor": "Renda",
+        "criterio_id": "11",
+        "criterio_valor": "SIM",
         "criterio_aplicavel": "S",
         "dependentes_json": "[]",
         "evidencia": "Proc 1/2026",
@@ -135,7 +140,7 @@ def test_importacao_atualiza_por_item_id(db, secretaria_setup):
     imported2, updated2, errors2 = importar_itens(db, folha, "t.csv", _csv_bytes(row))
     assert imported2 == 0 and updated2 == 1 and not errors2
     db.refresh(item)
-    assert item.valor_total_transferido == 450.0
+    assert float(item.valor_total_transferido) == 450.0
 
 
 def test_json_audfoben_estrutura(db, secretaria_setup):
@@ -161,3 +166,19 @@ def test_acesso_entre_secretarias(client, db, secretaria_setup):
     login_user(client, "opsme")
     r = client.get(f"/folhas/{folha_s1.id}", follow_redirects=False)
     assert r.status_code == 403
+
+
+def test_folha_bloqueada_apos_remessa_enviada(client, db, secretaria_setup):
+    from app.models import Remessa
+    from app.services import folha_edicao_bloqueada
+    _, ug, programa = secretaria_setup
+    gestor = create_user(db, "gestor_bloq", "SECRETARIA_GESTOR", secretaria_setup[0].id)
+    folha = _criar_folha(db, programa, ug, gestor.id)
+    importar_itens(db, folha, "t.csv", _csv_bytes(_item_form()))
+    db.add(Remessa(folha_id=folha.id, filename="t.json", sha256="a" * 64, size_bytes=10, status="ENVIADA", created_by=gestor.id))
+    db.commit()
+    assert folha_edicao_bloqueada(db, folha) is not None
+    login_user(client, "gestor_bloq")
+    token = csrf_from(client, f"/folhas/{folha.id}")
+    r = client.post(f"/folhas/{folha.id}/importar", data={"csrf_token": token}, files={"arquivo": ("t.csv", _csv_bytes(_item_form()), "text/csv")}, follow_redirects=False)
+    assert r.status_code == 400

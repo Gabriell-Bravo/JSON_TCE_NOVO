@@ -50,7 +50,7 @@
             "pattern": "^\\d{11}$",
             "description": "Informar cpf válido do beneficiário do programa. Apenas números."
           },
-          "numeroNIS": {
+          "numeroNIS": { 
             "type": "string",
             "minLength": 11,
             "maxLength": 11,
@@ -64,10 +64,13 @@
           },
           "sexo": {
             "type": "string",
-            "enum": ["M", "F"],
+            "enum": [
+              "M",
+              "F"
+            ],
             "description": "Informar o sexo do beneficiário do programa. Valores possíveis: M = masculino e F = Feminino"
           },
-          "nacionalidade": {
+          "nacionalidade": { 
             "type": "string",
             "maxLength": 150,
             "description": "Informar nacionalidade do beneficiário do programa. Tamanho máximo de 150 caracteres."
@@ -109,50 +112,62 @@
           },
           "codigoIBGEMunicipio": {
             "type": "string",
-            "pattern": "^\\d{7}$",
-            "description": "Informar código do município do beneficiário conforme cadastro no IBGE."
+            "pattern": "^\\d{7}$",           
+            "description": "Informar código do município do beneficiário conforme cadastro no IBGE. Tabela de referência disponível em: https://www.ibge.gov.br/explica/codigos-dos-municipios.php"
           },
           "valorTotalTransferido": {
             "type": "number",
             "multipleOf": 0.01,
             "minimum": 0,
-            "description": "Informar o valor total pago para beneficiário do programa."
+            "description": "Informar o valor total pago para beneficiário do programa. Apenas números e, havendo decimal, informar máximo de dois após ponto."
           },
           "totalPessoasBeneficio": {
             "type": "integer",
             "minimum": 1,
-            "description": "Informar a quantidade total de pessoas beneficiadas."
+            "description": "Informar a quantidade total de pessoas beneficiadas. Apenas números e no mínimo 1."
           },
           "totalDependentesBeneficio": {
             "type": "integer",
             "minimum": 0,
-            "description": "Informar a quantidade total de dependentes do beneficiário do programa."
+            "description": "Informar a quantidade total de dependentes do beneficiário do programa. Apenas números."
           },
           "criterios": {
             "type": "array",
             "minItems": 1,
+            "description": "Informar lista de critérios atendidos pelo beneficiário e que foram associados ao programa social",
             "items": {
               "type": "object",
               "properties": {
                 "identificadorCriterio": {
                   "type": "integer",
-                  "minimum": 1
+                  "minimum": 1,
+                  "description": "Informar identificador do critério associado ao programa social. O identificador do critério é cadastrado por meio do Cadastro Auxiliar - eTCE."
                 },
                 "valorAssociado": {
                   "type": "string",
-                  "maxLength": 100
+                  "maxLength": 100,
+                  "description": "Informar valor associado ao beneficiário para atender ao critério"
                 },
                 "aplicavel": {
                   "type": "string",
-                  "enum": ["S", "N"]
+                  "enum": [
+                    "S",
+                    "N"
+                  ],
+                  "description": "Informar se o critério é aplicável para o beneficiário."
                 }
               },
-              "required": ["identificadorCriterio", "valorAssociado", "aplicavel"],
+              "required": [
+                "identificadorCriterio",
+                "valorAssociado",
+                "aplicavel"
+              ],
               "additionalProperties": false
             }
           },
           "dependentes": {
             "type": "array",
+            "description": "Informar lista de dependentes do beneficiário do programa social.",
             "items": {
               "type": "object",
               "properties": {
@@ -160,27 +175,54 @@
                   "type": "string",
                   "minLength": 11,
                   "maxLength": 11,
-                  "pattern": "^\\d{11}$"
+                  "pattern": "^\\d{11}$",
+                  "description": "Informar CPF válido do dependente do beneficiário do programa. Apenas números e tamanho de 11 caracteres. Caso o dependente possua CPF ou seja maior de 18 anos, a informação será obrigatória."
                 },
-                "nome": {
+                  "nome": {
                   "type": "string",
-                  "maxLength": 250
+                  "maxLength": 250,
+                  "description": "Informar o nome do dependente do beneficiário do programa. Tamanho máximo de 250 caracteres."
                 },
                 "sexo": {
                   "type": "string",
-                  "enum": ["M", "F"]
+                  "enum": [
+                    "M",
+                    "F"
+                  ],
+                  "description": "Informar o sexo do dependente do beneficiário do programa. Valores possíveis: M = masculino e F = Feminino"
                 },
                 "dataNascimento": {
                   "type": "string",
-                  "format": "date"
+                  "format": "date",
+                  "description": "Informar a data de nascimento do dependente do beneficiário do programa. Formato aceito: AAAA-MM-DD"
                 },
                 "codigoParentesco": {
                   "type": "integer",
+                  "description": "Identifica a relação de parentesco da pessoa com o Responsável pela Unidade Familiar (RF).",
+                  "enum": [1,2,3,4,5,6,7,8,9,10,11],
+                  "enumDescriptions": {
+                    "1": "Pessoa Responsável pela Unidade Familiar (RF)",
+                    "2": "Cônjuge ou companheiro(a)",
+                    "3": "Filho(a)",
+                    "4": "Enteado(a)",
+                    "5": "Neto(a) ou bisneto(a)",
+                    "6": "Pai ou mãe",
+                    "7": "Sogro(a)",
+                    "8": "Irmão ou irmã",
+                    "9": "Genro ou nora",
+                    "10": "Outro parente",
+                    "11": "Não parente"
+                  },
                   "minimum": 1,
                   "maximum": 11
                 }
               },
-              "required": ["nome", "sexo", "dataNascimento", "codigoParentesco"],
+              "required": [
+                "nome",
+                "sexo",
+                "dataNascimento",
+                "codigoParentesco"
+              ],
               "additionalProperties": false
             }
           }

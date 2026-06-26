@@ -53,7 +53,7 @@ def normalize_date(value: Any) -> str:
     return parsed.isoformat()
 
 
-def normalize_money(value: Any) -> float:
+def normalize_money(value: Any) -> Decimal:
     raw = clean_text(value).replace("R$", "").replace(" ", "")
     if not raw:
         raise ValueError("Valor financeiro inválido.")
@@ -69,7 +69,7 @@ def normalize_money(value: Any) -> float:
         raise ValueError("Valor financeiro não pode ser negativo.")
     if val.as_tuple().exponent < -2:
         raise ValueError("Valor financeiro deve ter no máximo duas casas decimais.")
-    return float(val)
+    return val.quantize(Decimal("0.01"))
 
 
 def parse_json_array(value: Any, field_name: str, required: bool = False) -> list[dict[str, Any]]:
@@ -195,3 +195,79 @@ def gerar_criterio_unico(criterio_id: Any, criterio_valor: Any, criterio_aplicav
         "valorAssociado": clean_text(criterio_valor) or "Critério informado pela Secretaria",
         "aplicavel": clean_text(criterio_aplicavel or "S").upper(),
     }]
+
+
+def _parse_data_iso(value: str | None) -> date | None:
+    raw = clean_text(value)
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def competencia_referencia(ano: str, mes: int) -> date:
+    return date(int(ano), mes, 1)
+
+
+def criterio_vigente_na_competencia(meta: dict[str, Any], ano: str, mes: int) -> bool:
+    comp = competencia_referencia(ano, mes)
+    inicio = _parse_data_iso(meta.get("vigenciaInicio") or meta.get("vigencia_inicio"))
+    fim = _parse_data_iso(meta.get("vigenciaFim") or meta.get("vigencia_fim"))
+    indeterminado = bool(meta.get("prazoIndeterminado") or meta.get("prazo_indeterminado"))
+    if inicio and comp < inicio:
+        return False
+    if not indeterminado and fim and comp > fim:
+        return False
+    return True
+
+
+def validar_valor_associado_tipo(valor: str, tipo_dado: str) -> list[str]:
+    valor_limpo = clean_text(valor)
+    if not valor_limpo:
+        return ["informe o valor associado ao critério."]
+    tipo = clean_text(tipo_dado).lower()
+    if "sim" in tipo:
+        if valor_limpo.upper() not in {"SIM", "NAO", "NÃO", "S", "N"}:
+            return ["para critério Sim/Não use SIM ou NÃO."]
+        return []
+    if "valor" in tipo:
+        try:
+            normalize_money(valor_limpo)
+        except ValueError as exc:
+            return [str(exc)]
+        return []
+    if "número" in tipo or "numero" in tipo:
+        if not valor_limpo.isdigit():
+            return ["para critério Número informe um valor inteiro."]
+        return []
+    return []
+
+
+def validar_criterios_do_programa(
+    criterios: list[dict[str, Any]],
+    metadados_programa: list[dict[str, Any]],
+    ano: str,
+    mes: int,
+) -> list[str]:
+    if not metadados_programa:
+        return ["O programa não possui critérios de elegibilidade vinculados. Cadastre-os antes de validar a folha."]
+    mapa = {int(m["identificadorCriterio"]): m for m in metadados_programa}
+    errors: list[str] = []
+    for idx, c in enumerate(criterios, 1):
+        try:
+            cid = int(c.get("identificadorCriterio", 0))
+        except Exception:
+            cid = 0
+        if cid not in mapa:
+            errors.append(f"Critério {idx}: identificador {cid or '?'} não está vinculado ao programa no cadastro interno.")
+            continue
+        meta = mapa[cid]
+        if not criterio_vigente_na_competencia(meta, ano, mes):
+            errors.append(f"Critério {idx} (cód. {cid}): não está vigente na competência {mes:02d}/{ano}.")
+        if clean_text(c.get("aplicavel")) == "S":
+            tipo = meta.get("tipoDado") or meta.get("tipo_dado") or ""
+            for msg in validar_valor_associado_tipo(clean_text(c.get("valorAssociado")), tipo):
+                errors.append(f"Critério {idx} (cód. {cid}): {msg}")
+    return errors

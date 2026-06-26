@@ -15,4 +15,5 @@ DATABASE_URL = _raw_db_url.replace("postgres://", "postgresql://", 1) if _raw_db
 ADMIN_USER = os.getenv("APP_ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("APP_ADMIN_PASSWORD", "Admin@12345")
 FORCE_SECURE_COOKIE = os.getenv("APP_FORCE_SECURE_COOKIE", "false").lower() == "true"
-MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+# Limite de importação de planilhas (MB). O e-TCERJ aceita JSON de remessa até ~40 MB.
+MAX_UPLOAD_SIZE = int(os.getenv("APP_MAX_UPLOAD_MB", "25")) * 1024 * 1024
