@@ -113,6 +113,25 @@ class ValidationIssue(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     item = relationship("FolhaItem")
 
+class DeletionRequest(Base):
+    __tablename__ = "deletion_requests"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    target_type: Mapped[str] = mapped_column(String(40), nullable=False)  # FOLHA / FOLHA_ITEM / PROGRAMA / SECRETARIA / UG / USER
+    target_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    folha_id: Mapped[int | None] = mapped_column(ForeignKey("folhas.id"), nullable=True)
+    secretaria_id: Mapped[int | None] = mapped_column(ForeignKey("secretarias.id"), nullable=True)
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="PENDENTE", nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    requester = relationship("User", foreign_keys=[requested_by])
+    decider = relationship("User", foreign_keys=[decided_by])
+    secretaria = relationship("Secretaria")
+    folha = relationship("Folha")
+
 class Remessa(Base):
     __tablename__ = "remessas"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

@@ -14,10 +14,9 @@
     <p>Fluxo por Secretaria Gestora / AUDFOBEN</p>
     <nav>
       <a href="/">Painel</a>
-      <a href="/cadastros">Cadastros</a>
+      <a href="/cadastros">Programas e Cadastros</a>
       <a href="/folhas">Folhas</a>
-      <a href="/modelo-importacao">Modelo CSV</a>
-      <a href="/modelo-importacao.xlsx">Modelo Excel</a>
+      {% if user.role in ['ADMIN','SECRETARIA_GESTOR'] %}<a href="/solicitacoes-exclusao">Solicitações de Exclusão</a>{% endif %}
       {% if user.role in ['ADMIN'] %}<a href="/usuarios">Usuários</a>{% endif %}
       {% if user.role in ['ADMIN','CGM_CONSULTA'] %}<a href="/logs">Auditoria</a>{% endif %}
     </nav>

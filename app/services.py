@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from .config import EXPORT_DIR, MAX_UPLOAD_SIZE
 from .models import Beneficiario, Folha, FolhaItem, Programa, Remessa, User, ValidationIssue
 from .schema_audfoben import AUDFOBEN_SCHEMA
+from .catalogos import CRITERIOS_ELEGIBILIDADE, criterio_por_id
 from .validators import (
     clean_text,
     cpf_valido,
@@ -59,6 +60,67 @@ def friendly_schema_message(error_message: str) -> str:
     return error_message
 
 
+def _programa_criterios(programa: Programa) -> list[dict[str, Any]]:
+    """Retorna os critérios vinculados ao programa.
+
+    O sistema guarda metadados internos para ajudar a Secretaria a preencher a planilha,
+    mas o JSON AUDFOBEN só recebe identificadorCriterio, valorAssociado e aplicavel.
+    """
+    try:
+        data = json.loads(programa.criterios_padrao_json or "[]")
+    except Exception:
+        data = []
+    if isinstance(data, list) and data:
+        return [c for c in data if isinstance(c, dict)]
+    return []
+
+
+def criterios_from_program_columns(programa: Programa, form: dict[str, Any]) -> list[dict[str, Any]]:
+    criterios = []
+    for criterio in _programa_criterios(programa):
+        cid = int(criterio.get("identificadorCriterio") or criterio.get("id") or 0)
+        if cid <= 0:
+            continue
+        valor = clean_text(form.get(f"criterio_{cid}_valor"))
+        aplicavel = clean_text(form.get(f"criterio_{cid}_aplicavel")).upper() or "S"
+        if valor or aplicavel:
+            criterios.append({
+                "identificadorCriterio": cid,
+                "valorAssociado": valor or "SIM",
+                "aplicavel": "S" if aplicavel not in {"S", "N"} else aplicavel,
+            })
+    return criterios
+
+
+def build_programa_criterios_json(
+    criterio_ids: list[int | str],
+    limite_inferior: str = "",
+    limite_superior: str = "",
+    vigencia_inicio: str = "",
+    vigencia_fim: str = "",
+    prazo_indeterminado: bool = False,
+) -> str:
+    criterios = []
+    for raw in criterio_ids:
+        if raw in (None, ""):
+            continue
+        catalogo = criterio_por_id(int(raw))
+        if not catalogo:
+            continue
+        criterios.append({
+            "identificadorCriterio": int(catalogo["id"]),
+            "nome": catalogo["nome"],
+            "categoria": catalogo["categoria"],
+            "tipoDado": catalogo["tipo_dado"],
+            "limiteInferior": clean_text(limite_inferior),
+            "limiteSuperior": clean_text(limite_superior),
+            "vigenciaInicio": clean_text(vigencia_inicio),
+            "vigenciaFim": "" if prazo_indeterminado else clean_text(vigencia_fim),
+            "prazoIndeterminado": bool(prazo_indeterminado),
+        })
+    return json.dumps(criterios, ensure_ascii=False)
+
+
 def get_or_create_beneficiario(db: Session, data: dict[str, Any]) -> Beneficiario:
     cpf = digits_only(data.get("cpf"))
     beneficiario = db.scalar(select(Beneficiario).where(Beneficiario.cpf == cpf))
@@ -80,11 +142,13 @@ def get_or_create_beneficiario(db: Session, data: dict[str, Any]) -> Beneficiari
     return beneficiario
 
 
-def _prepare_item_payload(form: dict[str, Any]) -> dict[str, Any]:
+def _prepare_item_payload(form: dict[str, Any], programa: Programa | None = None) -> dict[str, Any]:
     errors = validar_beneficiario_basico(form)
     if errors:
         raise ValueError("; ".join(errors))
     criterios = parse_json_array(form.get("criterios_json"), "criterios", required=False)
+    if not criterios and programa is not None:
+        criterios = criterios_from_program_columns(programa, form)
     if not criterios:
         criterios = gerar_criterio_unico(form.get("criterio_id"), form.get("criterio_valor"), form.get("criterio_aplicavel"))
     c_errors = validar_criterios(criterios)
@@ -129,7 +193,7 @@ def _find_existing_item(db: Session, folha: Folha, form: dict[str, Any]) -> Folh
 
 
 def make_item_from_form(db: Session, folha: Folha, form: dict[str, Any]) -> FolhaItem:
-    payload = _prepare_item_payload(form)
+    payload = _prepare_item_payload(form, folha.programa)
     beneficiario = get_or_create_beneficiario(db, form)
     existing = _find_existing_item(db, folha, form)
     if existing:
@@ -364,10 +428,14 @@ def importar_itens(db: Session, folha: Folha, filename: str, data: bytes) -> tup
         try:
             form = dict(row)
             if not clean_text(form.get("criterios_json")):
-                form["criterios_json"] = json.dumps(
-                    gerar_criterio_unico(form.get("criterio_id"), form.get("criterio_valor"), form.get("criterio_aplicavel")),
-                    ensure_ascii=False,
-                )
+                dinamicos = criterios_from_program_columns(folha.programa, form)
+                if dinamicos:
+                    form["criterios_json"] = json.dumps(dinamicos, ensure_ascii=False)
+                else:
+                    form["criterios_json"] = json.dumps(
+                        gerar_criterio_unico(form.get("criterio_id"), form.get("criterio_valor"), form.get("criterio_aplicavel")),
+                        ensure_ascii=False,
+                    )
             had_item = bool(clean_text(form.get("item_id"))) or bool(
                 db.scalar(
                     select(FolhaItem.id)
@@ -439,6 +507,61 @@ def gerar_modelo_xlsx() -> bytes:
     instr["A4"] = "2. Para corrigir um registro existente, informe o item_id exportado da folha."
     instr["A5"] = "3. Se não houver item_id, o sistema atualiza pelo CPF quando já existir na folha."
     instr["A6"] = "4. dependentes_json deve ser uma lista JSON válida."
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def gerar_modelo_programa_xlsx(programa: Programa) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Beneficiarios"
+    base_columns = [
+        "item_id", "cpf", "numeroNIS", "nome", "sexo", "dataNascimento", "nacionalidade", "nomeMae", "enderecoCEP",
+        "logradouro", "bairro", "numero", "complemento", "codigoIBGEMunicipio", "valorTotalTransferido",
+        "totalPessoasBeneficio", "totalDependentesBeneficio", "dependentes_json", "evidencia",
+    ]
+    criterios = _programa_criterios(programa)
+    dynamic_columns = []
+    for criterio in criterios:
+        cid = int(criterio.get("identificadorCriterio") or criterio.get("id") or 0)
+        if cid:
+            dynamic_columns.extend([f"criterio_{cid}_valor", f"criterio_{cid}_aplicavel"])
+    columns = base_columns + dynamic_columns
+    header_fill = PatternFill("solid", fgColor="1D4ED8")
+    header_font = Font(color="FFFFFF", bold=True)
+    for col, name in enumerate(columns, start=1):
+        cell = ws.cell(row=1, column=col, value=name)
+        cell.fill = header_fill
+        cell.font = header_font
+        ws.column_dimensions[cell.column_letter].width = max(14, min(35, len(name) + 2))
+    exemplo = _exemplo_linha()
+    for col, name in enumerate(base_columns, start=1):
+        ws.cell(row=2, column=col, value=exemplo.get(name, ""))
+    offset = len(base_columns) + 1
+    for idx, criterio in enumerate(criterios):
+        cid = int(criterio.get("identificadorCriterio") or criterio.get("id") or 0)
+        ws.cell(row=2, column=offset + idx * 2, value="SIM")
+        ws.cell(row=2, column=offset + idx * 2 + 1, value="S")
+
+    instr = wb.create_sheet("Instrucoes")
+    instr["A1"] = f"Modelo específico do programa: {programa.nome}"
+    instr["A3"] = "Preencha uma linha por beneficiário. Não altere os nomes das colunas."
+    instr["A4"] = "As colunas criterio_<ID>_valor e criterio_<ID>_aplicavel foram geradas a partir dos critérios vinculados ao programa."
+    instr["A5"] = "Em aplicavel, use S ou N. Em valor, informe o dado que comprova o atendimento do critério, ex.: SIM, 200.00, 2, ou texto objetivo."
+    instr["A7"] = "Critérios vinculados ao programa"
+    headers = ["ID", "Nome", "Categoria", "Tipo de dado", "Limite inferior", "Limite superior", "Vigência", "Fim vigência"]
+    for col, name in enumerate(headers, start=1):
+        instr.cell(row=8, column=col, value=name).font = Font(bold=True)
+    for row_idx, criterio in enumerate(criterios, start=9):
+        instr.cell(row=row_idx, column=1, value=criterio.get("identificadorCriterio"))
+        instr.cell(row=row_idx, column=2, value=criterio.get("nome"))
+        instr.cell(row=row_idx, column=3, value=criterio.get("categoria"))
+        instr.cell(row=row_idx, column=4, value=criterio.get("tipoDado") or criterio.get("tipo_dado"))
+        instr.cell(row=row_idx, column=5, value=criterio.get("limiteInferior"))
+        instr.cell(row=row_idx, column=6, value=criterio.get("limiteSuperior"))
+        instr.cell(row=row_idx, column=7, value=criterio.get("vigenciaInicio"))
+        instr.cell(row=row_idx, column=8, value="Prazo indeterminado" if criterio.get("prazoIndeterminado") else criterio.get("vigenciaFim"))
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

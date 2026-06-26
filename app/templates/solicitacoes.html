@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero"><h2>Solicitações de Exclusão</h2><p>Operadores solicitam exclusão de beneficiários ao gestor. Gestores solicitam exclusão de folhas ao ADM. Todas as decisões ficam registradas em auditoria.</p></section>
+<div class="card">
+  <h3>Solicitações</h3>
+  <table>
+    <thead><tr><th>ID</th><th>Status</th><th>Tipo</th><th>Alvo</th><th>Secretaria</th><th>Solicitante</th><th>Motivo</th><th>Decisão</th><th>Ações</th></tr></thead>
+    <tbody>
+    {% for r in solicitacoes %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td><span class="tag {% if r.status == 'APROVADA' %}green{% elif r.status == 'RECUSADA' %}red{% else %}amber{% endif %}">{{ r.status }}</span></td>
+        <td>{{ r.target_type }}</td>
+        <td>{{ r.target_id }}</td>
+        <td>{{ r.secretaria.sigla if r.secretaria else '-' }}</td>
+        <td>{{ r.requester.username if r.requester else '-' }}</td>
+        <td>{{ r.reason or '-' }}</td>
+        <td>{{ r.decision_note or '-' }}</td>
+        <td>
+          {% if r.status.startswith('PENDENTE') %}
+          <form method="post" action="/solicitacoes-exclusao/{{ r.id }}/aprovar" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="decision_note" value="Aprovada."><button class="btn">Aprovar</button></form>
+          <form method="post" action="/solicitacoes-exclusao/{{ r.id }}/recusar" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="decision_note" value="Recusada."><button class="btn red">Recusar</button></form>
+          {% else %}-{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="9">Nenhuma solicitação registrada.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -15,18 +15,20 @@
 <div class="card">
   <h3>Ações da folha</h3>
   <div class="actions">
-    {% if user.role in ['ADMIN','SECRETARIA_OPERADOR','SECRETARIA_GESTOR','SECRETARIA_ENVIO'] %}
+    {% if user.role in ['ADMIN','SECRETARIA_OPERADOR','SECRETARIA_GESTOR'] %}
     <form method="post" action="/folhas/{{ folha.id }}/validar" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn amber">Executar validação</button></form>
     {% endif %}
     {% if user.role in ['ADMIN','SECRETARIA_GESTOR'] %}
     <form method="post" action="/folhas/{{ folha.id }}/certificar-gestor" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn secondary">Certificar folha (gestor)</button></form>
     {% endif %}
-    {% if user.role in ['ADMIN','SECRETARIA_ENVIO'] %}
+    {% if user.role in ['ADMIN','SECRETARIA_GESTOR'] %}
     <form method="post" action="/folhas/{{ folha.id }}/exportar" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn">Gerar JSON AUDFOBEN</button></form>
     {% endif %}
+    <a class="btn secondary" href="/programas/{{ folha.programa.id }}/modelo-beneficiarios.xlsx">Modelo Excel específico do programa</a>
     <a class="btn secondary" href="/folhas/{{ folha.id }}/exportar-planilha">Exportar planilha atual (.xlsx)</a>
+    {% if user.role == 'SECRETARIA_GESTOR' %}<form method="post" action="/folhas/{{ folha.id }}/solicitar-exclusao" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="reason" value="Solicitação de exclusão da folha pelo gestor."><button class="btn red">Solicitar exclusão ao ADM</button></form>{% endif %}
   </div>
-  <p class="small"><strong>Ordem recomendada:</strong> importar ou lançar dados → validar → gestor certifica → perfil de envio gera o JSON.</p>
+  <p class="small"><strong>Ordem recomendada:</strong> importar ou lançar dados → validar → gestor certifica → o próprio gestor gera o JSON. Não existe mais perfil separado de envio.</p>
 </div>
 
 <div class="grid two">
@@ -35,13 +37,12 @@
   <h3>Importar planilha</h3>
   <form method="post" action="/folhas/{{ folha.id }}/importar" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Arquivo .csv ou .xlsx</label>
+    <label>Arquivo .xlsx ou .csv</label>
     <input type="file" name="arquivo" accept=".csv,.xlsx" required>
     <p class="small">Use a coluna <strong>item_id</strong> para atualizar registros sem duplicar. Sem item_id, o sistema atualiza pelo CPF se já existir na folha.</p>
     <p>
       <button class="btn">Importar</button>
-      <a class="btn secondary" href="/modelo-importacao">Modelo CSV</a>
-      <a class="btn secondary" href="/modelo-importacao.xlsx">Modelo Excel</a>
+      <a class="btn secondary" href="/programas/{{ folha.programa.id }}/modelo-beneficiarios.xlsx">Baixar modelo Excel do programa</a>
     </p>
   </form>
 </div>
@@ -109,7 +110,7 @@
         <td>{{ i.total_pessoas_beneficio }}</td>
         <td>{{ i.total_dependentes_beneficio }}</td>
         <td>{{ i.evidencia or '-' }}</td>
-        <td>{% if user.role in ['ADMIN','SECRETARIA_OPERADOR','SECRETARIA_GESTOR'] %}<form method="post" action="/folhas/{{ folha.id }}/itens/{{ i.id }}/delete" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn red">Excluir</button></form>{% else %}-{% endif %}</td>
+        <td>{% if user.role in ['ADMIN','SECRETARIA_GESTOR'] %}<form method="post" action="/folhas/{{ folha.id }}/itens/{{ i.id }}/delete" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn red">Excluir</button></form>{% elif user.role == 'SECRETARIA_OPERADOR' %}<form method="post" action="/folhas/{{ folha.id }}/itens/{{ i.id }}/solicitar-exclusao" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="reason" value="Solicitação do operador para exclusão de beneficiário."><button class="btn amber">Solicitar exclusão</button></form>{% else %}-{% endif %}</td>
       </tr>
       {% else %}
       <tr><td colspan="8">Nenhum beneficiário cadastrado.</td></tr>

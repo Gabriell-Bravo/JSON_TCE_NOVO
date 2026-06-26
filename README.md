@@ -1,120 +1,88 @@
 # Hub Municipal de Benefícios Socioassistenciais — Deliberação TCE-RJ nº 361/2025
 
-Sistema MVP em **Python/FastAPI**, **SQLite**, **SQLAlchemy**, **Jinja2** e **openpyxl** para que Secretarias gestoras cadastrem/importem beneficiários, validem dados, certifiquem a folha e gerem o arquivo JSON **AUDFOBEN** para o e-TCERJ.
+Sistema MVP funcional em **FastAPI + SQLite + Jinja2 + HTML/CSS + openpyxl + jsonschema** para apoiar Secretarias gestoras no cadastro/importação de beneficiários, validação de dados, certificação da folha e geração do JSON AUDFOBEN.
 
-## Fluxo operacional
+## Fluxo funcional desta versão
 
-1. **Operador** da Secretaria lança ou importa beneficiários.
-2. O sistema executa **validações** (erros bloqueantes e alertas).
-3. O operador corrige pendências.
-4. O **gestor do benefício** certifica a folha.
-5. O perfil de **envio** gera e baixa o JSON AUDFOBEN.
-6. A **CGM** (quando cadastrada) consulta dados e auditoria, sem certificar ou validar tecnicamente.
+1. A Secretaria gestora cadastra o programa do benefício.
+2. O sistema vincula ao programa seus critérios de elegibilidade previamente escolhidos no catálogo interno inspirado no e-TCERJ.
+3. O gestor baixa a planilha Excel específica daquele programa.
+4. O operador ou gestor importa/cadastra beneficiários.
+5. O sistema valida campos obrigatórios, CPF, critérios, dependentes e schema AUDFOBEN.
+6. O gestor certifica a folha.
+7. O próprio gestor gera e baixa o JSON.
 
-Não há etapa de Finanças nem validação técnica obrigatória da CGM.
+Não existe mais o perfil `SECRETARIA_ENVIO`. O gestor concentra a certificação e geração do arquivo JSON.
 
-## Perfis de usuário
+## Perfis
 
 | Perfil | Função |
-|--------|--------|
-| `ADMIN` | Administração geral do sistema |
-| `SECRETARIA_OPERADOR` | Cadastra, importa e corrige dados da própria Secretaria |
-| `SECRETARIA_GESTOR` | Valida e **certifica** a folha |
-| `SECRETARIA_ENVIO` | **Gera e baixa** o JSON após certificação |
-| `SECRETARIA_CONSULTA` | Somente leitura (CPF parcialmente mascarado) |
-| `CGM_CONSULTA` | Consulta geral e logs de auditoria |
+|---|---|
+| `ADMIN` | Administra usuários, Secretarias, UGs, exclusões administrativas e auditoria. |
+| `SECRETARIA_OPERADOR` | Cadastra/importa/corrige beneficiários da própria Secretaria e solicita exclusão de beneficiário ao gestor. |
+| `SECRETARIA_GESTOR` | Cadastra programas, cria folhas, valida, certifica, exclui beneficiários, gera JSON e solicita exclusão de folha ao ADM. |
+| `SECRETARIA_CONSULTA` | Consulta os dados da própria Secretaria. |
+| `CGM_CONSULTA` | Consulta/auditoria, sem aprovar, validar tecnicamente ou gerar remessa. |
 
-Usuários de Secretaria devem estar vinculados a uma Secretaria. O acesso a folhas e programas é filtrado por essa vinculação.
+## Principais mudanças da versão
 
-## Instalação no Windows (VS Code)
+- Remoção do perfil `SECRETARIA_ENVIO`.
+- `SECRETARIA_GESTOR` passa a gerar JSON após certificação.
+- Somente `ADMIN` cria Secretaria e Unidade Gestora.
+- Somente `SECRETARIA_GESTOR` cria novos programas.
+- Programa agora possui cadastro mais próximo da mecânica do e-TCERJ: forma de pagamento, populações atendidas, critérios vinculados, vigência e limites.
+- Planilha Excel específica por programa, contendo os critérios selecionados no cadastro do programa.
+- Remoção dos links de modelo CSV/Excel do menu lateral.
+- Admin pode excluir/desativar usuários, Secretarias, UGs e folhas.
+- Gestor pode solicitar exclusão de folha ao ADM.
+- Gestor pode excluir beneficiários diretamente.
+- Operador pode solicitar exclusão de beneficiário ao gestor.
+- Criado painel de solicitações de exclusão.
+- Mantida trilha de auditoria.
 
-```powershell
-cd delib361_hub
-python -m venv venv
-venv\Scripts\activate
+## Instalação no Windows
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 python run.py
 ```
 
-Acesse: **http://127.0.0.1:8000**
+Acesse:
 
-Usuário inicial: `admin` / `Admin@12345`
-
-Variáveis de ambiente úteis:
-
-```powershell
-set APP_ADMIN_PASSWORD=uma-senha-forte
-set APP_SECRET_KEY=chave-aleatoria-longa
-set APP_FORCE_SECURE_COOKIE=true
-set APP_DATABASE_URL=sqlite:///caminho/custom.db
+```text
+http://127.0.0.1:8000
 ```
 
-## Estrutura de pastas
+Login inicial:
 
+```text
+Usuário: admin
+Senha: Admin@12345
 ```
-delib361_hub/
-  app/
-    main.py           # rotas FastAPI
-    models.py         # modelos SQLAlchemy
-    services.py       # importação, validação, JSON
-    validators.py     # regras de negócio
-    security.py       # autenticação, CSRF, auditoria
-    schema/audfoben.json   # schema oficial AUDFOBEN
-    templates/        # telas HTML
-    static/           # CSS
-    data/             # banco SQLite e JSONs exportados
-  tests/              # testes automatizados
-  run.py              # entrada do servidor
-  requirements.txt
-```
-
-## Importação e exportação de planilhas
-
-**Modelos:** menu lateral → Modelo CSV ou Modelo Excel.
-
-**Colunas aceitas:**
-
-`item_id`, `cpf`, `numeroNIS`, `nome`, `sexo`, `dataNascimento`, `nacionalidade`, `nomeMae`, `enderecoCEP`, `logradouro`, `bairro`, `numero`, `complemento`, `codigoIBGEMunicipio`, `valorTotalTransferido`, `totalPessoasBeneficio`, `totalDependentesBeneficio`, `criterio_id`, `criterio_valor`, `criterio_aplicavel`, `dependentes_json`, `evidencia`
-
-**Reimportação sem duplicar:**
-- Informe `item_id` (exportado na planilha da folha) para atualizar o registro.
-- Sem `item_id`, o sistema atualiza pelo **CPF** se já existir na folha.
-
-**Exportar planilha atual:** na tela da folha → *Exportar planilha atual (.xlsx)*.
-
-## Validações
-
-- Erros **bloqueantes** impedem certificação e geração do JSON.
-- **Alertas** permitem continuar, mas ficam registrados para conferência.
-
-Regras principais: CPF válido, duplicidade na folha, NIS com 11 dígitos, sexo M/F, IBGE 7 dígitos, critérios obrigatórios, coerência de dependentes, programa homologado/vigente, folha suplementar exige ordinária na competência, validação final contra schema AUDFOBEN.
-
-## Alterar validações
-
-Edite `app/validators.py` (regras de campo) e `app/services.py` (validação da folha e montagem do JSON).
-
-## Alterar schema AUDFOBEN
-
-Substitua `app/schema/audfoben.json` pelo arquivo oficial do TCE-RJ. O sistema carrega automaticamente na inicialização.
 
 ## Testes
 
-```powershell
-venv\Scripts\activate
-pytest tests/ -v
+```bash
+pytest -q
 ```
 
-Cobertura: CPF, perfis (certificação/envio), importação com `item_id`, geração JSON, bloqueio de exportação com pendências.
+Nesta versão, os testes automatizados foram executados com sucesso.
 
-## Produção
+## Arquivos principais
 
-1. Migrar para **PostgreSQL** (`APP_DATABASE_URL`).
-2. HTTPS + `APP_FORCE_SECURE_COOKIE=true`.
-3. `APP_SECRET_KEY` forte e única.
-4. Backup diário de `app/data/` e logs.
-5. Restringir acesso por rede interna/VPN.
-6. Integrar SSO municipal quando disponível.
+| Arquivo | Função |
+|---|---|
+| `app/main.py` | Rotas, perfis, controle de acesso e telas. |
+| `app/models.py` | Tabelas do banco de dados. |
+| `app/services.py` | Importação, geração de planilhas, validação e exportação JSON. |
+| `app/validators.py` | Validação de CPF, datas, critérios, dependentes e valores. |
+| `app/catalogos.py` | Catálogos de critérios, formas de pagamento e populações atendidas. |
+| `app/templates/*.html` | Telas do sistema. |
+| `app/schema/audfoben.json` | Schema JSON AUDFOBEN. |
 
-## Observação
+## Atenção sobre os critérios de elegibilidade
 
-O schema em `app/schema/audfoben.json` segue a Deliberação 361/2025. Atualize-o sempre que o TCE-RJ publicar nova versão.
+O catálogo em `app/catalogos.py` foi montado com base nas opções visíveis do módulo de Cadastro Auxiliar enviado. Antes de produção, a equipe deve conferir os identificadores finais com os códigos efetivamente gerados pelo e-TCERJ para cada programa cadastrado/homologado.
+

@@ -83,10 +83,10 @@ def test_gestor_pode_certificar_operador_nao(client, db, secretaria_setup):
     assert folha.secretaria_certified_by == gestor.id
 
 
-def test_envio_gera_json_gestor_nao(client, db, secretaria_setup):
+def test_gestor_gera_json_sem_perfil_envio(client, db, secretaria_setup):
     secretaria, ug, programa = secretaria_setup
     gestor = create_user(db, "gestor2", "SECRETARIA_GESTOR", secretaria.id)
-    create_user(db, "envio1", "SECRETARIA_ENVIO", secretaria.id)
+    create_user(db, "consulta1", "SECRETARIA_CONSULTA", secretaria.id)
     folha = _criar_folha(db, programa, ug, gestor.id)
     importar_itens(db, folha, "t.csv", _csv_bytes(_item_form()))
     validate_folha(db, folha)
@@ -94,12 +94,12 @@ def test_envio_gera_json_gestor_nao(client, db, secretaria_setup):
     folha.status = "CERTIFICADA_GESTOR"
     db.commit()
 
-    login_user(client, "gestor2")
+    login_user(client, "consulta1")
     token = csrf_from(client, f"/folhas/{folha.id}")
     r = client.post(f"/folhas/{folha.id}/exportar", data={"csrf_token": token}, follow_redirects=False)
     assert r.status_code == 403
 
-    login_user(client, "envio1")
+    login_user(client, "gestor2")
     token = csrf_from(client, f"/folhas/{folha.id}")
     r = client.post(f"/folhas/{folha.id}/exportar", data={"csrf_token": token}, follow_redirects=True)
     assert r.status_code == 200
@@ -110,14 +110,14 @@ def test_envio_gera_json_gestor_nao(client, db, secretaria_setup):
 
 def test_bloqueio_exportacao_com_erro(client, db, secretaria_setup):
     secretaria, ug, programa = secretaria_setup
-    envio = create_user(db, "envio2", "SECRETARIA_ENVIO", secretaria.id)
-    folha = _criar_folha(db, programa, ug, envio.id)
-    folha.secretaria_certified_by = envio.id
+    gestor = create_user(db, "gestor_export_erro", "SECRETARIA_GESTOR", secretaria.id)
+    folha = _criar_folha(db, programa, ug, gestor.id)
+    folha.secretaria_certified_by = gestor.id
     db.commit()
     db.refresh(folha)
     assert len(folha.itens) == 0
 
-    login_user(client, "envio2")
+    login_user(client, "gestor_export_erro")
     token = csrf_from(client, f"/folhas/{folha.id}")
     r = client.post(f"/folhas/{folha.id}/exportar", data={"csrf_token": token}, follow_redirects=False)
     assert r.status_code == 400

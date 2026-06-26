@@ -13,14 +13,17 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .config import ADMIN_PASSWORD, ADMIN_USER, BASE_DIR, EXPORT_DIR, FORCE_SECURE_COOKIE, SECRET_KEY
 from .database import Base, engine, get_db
-from .models import AuditLog, Folha, FolhaItem, Programa, Remessa, Secretaria, UnidadeGestora, User, ValidationIssue
+from .models import AuditLog, DeletionRequest, Folha, FolhaItem, Programa, Remessa, Secretaria, UnidadeGestora, User, ValidationIssue
 from .security import audit, get_csrf_token, hash_password, require_login, require_role, validate_csrf, verify_password
 from .display import issue_label, mask_cpf, status_label
+from .catalogos import CRITERIOS_ELEGIBILIDADE, FORMAS_PAGAMENTO, POPULACOES_ATENDIDAS
 from .services import (
+    build_programa_criterios_json,
     exportar_folha_xlsx,
     exportar_remessa,
     gerar_modelo_csv,
     gerar_modelo_xlsx,
+    gerar_modelo_programa_xlsx,
     importar_itens,
     make_item_from_form,
     validate_folha,
@@ -34,22 +37,21 @@ templates.env.filters["mask_cpf"] = mask_cpf
 templates.env.filters["status_label"] = status_label
 templates.env.filters["issue_label"] = issue_label
 
-# Perfis revisados: não há certificação de Finanças nem validação técnica de CGM.
-# O ciclo é interno à secretaria gestora do benefício.
+# Perfis revisados: o antigo SECRETARIA_ENVIO foi removido.
+# O gestor do benefício, dentro da Secretaria, cadastra programa, cria folha, certifica e gera o JSON.
 ROLES = [
     "ADMIN",
     "SECRETARIA_OPERADOR",   # lança/importa/corrige dados da própria secretaria
-    "SECRETARIA_GESTOR",     # valida e certifica a folha da própria secretaria
-    "SECRETARIA_ENVIO",      # gera/download do JSON da própria secretaria após certificação
+    "SECRETARIA_GESTOR",     # cadastra programa, cria folha, certifica e gera JSON da própria secretaria
     "SECRETARIA_CONSULTA",   # somente leitura da própria secretaria
     "CGM_CONSULTA",          # somente acompanhamento/auditoria, sem aprovar ou validar tecnicamente
 ]
-SECRETARIA_ROLES = {"SECRETARIA_OPERADOR", "SECRETARIA_GESTOR", "SECRETARIA_ENVIO", "SECRETARIA_CONSULTA"}
+SECRETARIA_ROLES = {"SECRETARIA_OPERADOR", "SECRETARIA_GESTOR", "SECRETARIA_CONSULTA"}
 GLOBAL_READ_ROLES = {"ADMIN", "CGM_CONSULTA"}
 WRITE_ROLES = {"ADMIN", "SECRETARIA_OPERADOR", "SECRETARIA_GESTOR"}
-VALIDATE_ROLES = {"ADMIN", "SECRETARIA_OPERADOR", "SECRETARIA_GESTOR", "SECRETARIA_ENVIO"}
+VALIDATE_ROLES = {"ADMIN", "SECRETARIA_OPERADOR", "SECRETARIA_GESTOR"}
 CERTIFY_ROLES = {"ADMIN", "SECRETARIA_GESTOR"}
-EXPORT_ROLES = {"ADMIN", "SECRETARIA_ENVIO"}
+EXPORT_ROLES = {"ADMIN", "SECRETARIA_GESTOR"}
 
 
 def init_db() -> None:
@@ -92,6 +94,9 @@ def ctx(request: Request, db: Session, user: User | None = None, **extra):
         "csrf_token": get_csrf_token(request),
         "roles": ROLES,
         "mask_sensitive": mask_sensitive,
+        "criterios_catalogo": CRITERIOS_ELEGIBILIDADE,
+        "formas_pagamento": FORMAS_PAGAMENTO,
+        "populacoes_atendidas": POPULACOES_ATENDIDAS,
     }
     data.update(extra)
     return data
@@ -240,17 +245,66 @@ def criar_unidade(request: Request, db: Annotated[Session, Depends(get_db)], use
 
 
 @app.post("/programas")
-def criar_programa(request: Request, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)], nome: str = Form(...), secretaria_id: int = Form(...), unidade_id: int = Form(...), codigo_etce: str = Form(""), norma_instituidora: str = Form(""), vigente: str = Form("off"), homologado_etce: str = Form("off"), criterios_padrao_json: str = Form(""), csrf_token: str = Form(...)):
-    validate_csrf(request, csrf_token); require_role(user, ["ADMIN", "SECRETARIA_GESTOR"])
-    if user.role != "ADMIN":
-        require_secretaria_access(user, secretaria_id)
+def criar_programa(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(current_user)],
+    nome: str = Form(...),
+    unidade_id: int = Form(...),
+    codigo_etce: str = Form(""),
+    norma_instituidora: str = Form(""),
+    valor_individual: str = Form(""),
+    forma_pagamento: str = Form(""),
+    unidade_orcamentaria: str = Form(""),
+    populacoes: list[str] = Form(default=[]),
+    criterio_ids: list[str] = Form(default=[]),
+    limite_inferior: str = Form(""),
+    limite_superior: str = Form(""),
+    criterio_vigencia_inicio: str = Form(""),
+    criterio_vigencia_fim: str = Form(""),
+    prazo_indeterminado: str = Form("off"),
+    vigente: str = Form("off"),
+    homologado_etce: str = Form("off"),
+    csrf_token: str = Form(...),
+):
+    validate_csrf(request, csrf_token)
+    # Conforme a regra definida para o Município, somente o gestor da Secretaria cria programas.
+    require_role(user, ["SECRETARIA_GESTOR"])
+    assert_secretaria_bound(user)
+    secretaria_id = int(user.secretaria_id)
     unidade = db.get(UnidadeGestora, unidade_id)
     if not unidade:
         raise HTTPException(404, "Unidade Gestora não localizada.")
     if unidade.secretaria_id != secretaria_id:
         raise HTTPException(400, "A Unidade Gestora deve pertencer à Secretaria do programa.")
-    p = Programa(nome=nome.strip(), secretaria_id=secretaria_id, unidade_id=unidade_id, codigo_etce=int(codigo_etce) if str(codigo_etce).strip() else None, norma_instituidora=norma_instituidora.strip() or None, vigente=vigente == "on", homologado_etce=homologado_etce == "on", criterios_padrao_json=criterios_padrao_json.strip() or None)
-    db.add(p); db.commit(); db.refresh(p)
+    criterios_json = build_programa_criterios_json(
+        criterio_ids,
+        limite_inferior=limite_inferior,
+        limite_superior=limite_superior,
+        vigencia_inicio=criterio_vigencia_inicio,
+        vigencia_fim=criterio_vigencia_fim,
+        prazo_indeterminado=(prazo_indeterminado == "on"),
+    )
+    meta = {
+        "valorIndividual": valor_individual.strip(),
+        "formaPagamento": forma_pagamento.strip(),
+        "unidadeOrcamentaria": unidade_orcamentaria.strip(),
+        "populacoesAtendidas": populacoes,
+    }
+    norma = (norma_instituidora.strip() or "") + "\n\n[META_PROGRAMA] " + __import__("json").dumps(meta, ensure_ascii=False)
+    p = Programa(
+        nome=nome.strip(),
+        secretaria_id=secretaria_id,
+        unidade_id=unidade_id,
+        codigo_etce=int(codigo_etce) if str(codigo_etce).strip() else None,
+        norma_instituidora=norma.strip() or None,
+        vigente=vigente == "on",
+        homologado_etce=homologado_etce == "on",
+        criterios_padrao_json=criterios_json,
+    )
+    db.add(p)
+    db.commit()
+    db.refresh(p)
     audit(db, request, user, "CRIAR", "Programa", p.id, p.nome)
     return RedirectResponse("/cadastros", status_code=303)
 
@@ -309,7 +363,7 @@ async def adicionar_item(request: Request, folha_id: int, db: Annotated[Session,
 
 @app.post("/folhas/{folha_id}/itens/{item_id}/delete")
 def deletar_item(request: Request, folha_id: int, item_id: int, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)], csrf_token: str = Form(...)):
-    validate_csrf(request, csrf_token); require_role(user, WRITE_ROLES)
+    validate_csrf(request, csrf_token); require_role(user, ["ADMIN", "SECRETARIA_GESTOR"])
     folha = db.get(Folha, folha_id)
     if not folha: raise HTTPException(404, "Folha não localizada.")
     require_folha_access(user, folha)
@@ -429,6 +483,190 @@ def exportar_planilha_folha(folha_id: int, db: Annotated[Session, Depends(get_db
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+
+@app.get("/programas/{programa_id}/modelo-beneficiarios.xlsx")
+def modelo_programa_xlsx(programa_id: int, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)]):
+    programa = db.get(Programa, programa_id)
+    if not programa:
+        raise HTTPException(404, "Programa não localizado.")
+    require_program_access(user, programa)
+    content = gerar_modelo_programa_xlsx(programa)
+    filename = f"modelo_beneficiarios_programa_{programa.id}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.post("/folhas/{folha_id}/solicitar-exclusao")
+def solicitar_exclusao_folha(request: Request, folha_id: int, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)], reason: str = Form(""), csrf_token: str = Form(...)):
+    validate_csrf(request, csrf_token); require_role(user, ["SECRETARIA_GESTOR"])
+    folha = db.get(Folha, folha_id)
+    if not folha: raise HTTPException(404, "Folha não localizada.")
+    require_folha_access(user, folha)
+    req = DeletionRequest(target_type="FOLHA", target_id=folha.id, folha_id=folha.id, secretaria_id=folha.programa.secretaria_id, requested_by=user.id, status="PENDENTE_ADMIN", reason=reason.strip() or "Solicitação de exclusão da folha pelo gestor.")
+    db.add(req); db.commit(); db.refresh(req)
+    audit(db, request, user, "SOLICITAR_EXCLUSAO", "Folha", folha.id, req.reason)
+    request.session["flash"] = "Solicitação de exclusão enviada ao ADM."
+    return RedirectResponse(f"/folhas/{folha.id}", status_code=303)
+
+
+@app.post("/folhas/{folha_id}/itens/{item_id}/solicitar-exclusao")
+def solicitar_exclusao_item(request: Request, folha_id: int, item_id: int, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)], reason: str = Form(""), csrf_token: str = Form(...)):
+    validate_csrf(request, csrf_token); require_role(user, ["SECRETARIA_OPERADOR"])
+    folha = db.get(Folha, folha_id)
+    if not folha: raise HTTPException(404, "Folha não localizada.")
+    require_folha_access(user, folha)
+    item = db.get(FolhaItem, item_id)
+    if not item or item.folha_id != folha.id: raise HTTPException(404, "Beneficiário não localizado na folha.")
+    req = DeletionRequest(target_type="FOLHA_ITEM", target_id=item.id, folha_id=folha.id, secretaria_id=folha.programa.secretaria_id, requested_by=user.id, status="PENDENTE_GESTOR", reason=reason.strip() or "Solicitação de exclusão de beneficiário pelo operador.")
+    db.add(req); db.commit(); db.refresh(req)
+    audit(db, request, user, "SOLICITAR_EXCLUSAO", "FolhaItem", item.id, req.reason)
+    request.session["flash"] = "Solicitação de exclusão enviada ao gestor da Secretaria."
+    return RedirectResponse(f"/folhas/{folha.id}", status_code=303)
+
+
+@app.get("/solicitacoes-exclusao", response_class=HTMLResponse)
+def solicitacoes_exclusao(request: Request, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)]):
+    require_role(user, ["ADMIN", "SECRETARIA_GESTOR"])
+    stmt = select(DeletionRequest).order_by(DeletionRequest.created_at.desc())
+    if user.role == "SECRETARIA_GESTOR":
+        assert_secretaria_bound(user)
+        stmt = stmt.where(DeletionRequest.secretaria_id == user.secretaria_id)
+    solicitacoes = db.scalars(stmt).all()
+    return templates.TemplateResponse("solicitacoes.html", ctx(request, db, user, solicitacoes=solicitacoes))
+
+
+def _delete_target(db: Session, req: DeletionRequest) -> str:
+    if req.target_type == "FOLHA_ITEM":
+        item = db.get(FolhaItem, req.target_id)
+        if not item:
+            return "Beneficiário já não existia."
+        folha = item.folha
+        db.delete(item)
+        folha.secretaria_certified_by = None
+        folha.status = "RASCUNHO"
+        return f"Beneficiário da folha {folha.id} excluído."
+    if req.target_type == "FOLHA":
+        folha = db.get(Folha, req.target_id)
+        if not folha:
+            return "Folha já não existia."
+        db.query(ValidationIssue).filter(ValidationIssue.folha_id == folha.id).delete(synchronize_session=False)
+        db.query(Remessa).filter(Remessa.folha_id == folha.id).delete(synchronize_session=False)
+        db.delete(folha)
+        return f"Folha {req.target_id} excluída."
+    if req.target_type == "PROGRAMA":
+        programa = db.get(Programa, req.target_id)
+        if not programa:
+            return "Programa já não existia."
+        folhas = db.scalars(select(Folha).where(Folha.programa_id == programa.id)).all()
+        if folhas:
+            raise HTTPException(400, "Não é possível excluir programa com folhas vinculadas. Exclua as folhas antes.")
+        db.delete(programa)
+        return f"Programa {req.target_id} excluído."
+    raise HTTPException(400, "Tipo de solicitação não suportado.")
+
+
+@app.post("/solicitacoes-exclusao/{request_id}/aprovar")
+def aprovar_solicitacao(request: Request, request_id: int, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)], decision_note: str = Form(""), csrf_token: str = Form(...)):
+    validate_csrf(request, csrf_token)
+    req = db.get(DeletionRequest, request_id)
+    if not req: raise HTTPException(404, "Solicitação não localizada.")
+    if req.status == "PENDENTE_GESTOR":
+        require_role(user, ["SECRETARIA_GESTOR", "ADMIN"])
+        if user.role == "SECRETARIA_GESTOR":
+            require_secretaria_access(user, req.secretaria_id or 0)
+    else:
+        require_role(user, ["ADMIN"])
+    msg = _delete_target(db, req)
+    req.status = "APROVADA"
+    req.decided_by = user.id
+    req.decision_note = decision_note.strip() or msg
+    from datetime import datetime
+    req.decided_at = datetime.utcnow()
+    db.commit()
+    audit(db, request, user, "APROVAR_EXCLUSAO", req.target_type, req.target_id, msg)
+    request.session["flash"] = msg
+    return RedirectResponse("/solicitacoes-exclusao", status_code=303)
+
+
+@app.post("/solicitacoes-exclusao/{request_id}/recusar")
+def recusar_solicitacao(request: Request, request_id: int, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)], decision_note: str = Form(""), csrf_token: str = Form(...)):
+    validate_csrf(request, csrf_token)
+    req = db.get(DeletionRequest, request_id)
+    if not req: raise HTTPException(404, "Solicitação não localizada.")
+    if req.status == "PENDENTE_GESTOR":
+        require_role(user, ["SECRETARIA_GESTOR", "ADMIN"])
+        if user.role == "SECRETARIA_GESTOR":
+            require_secretaria_access(user, req.secretaria_id or 0)
+    else:
+        require_role(user, ["ADMIN"])
+    req.status = "RECUSADA"
+    req.decided_by = user.id
+    req.decision_note = decision_note.strip() or "Solicitação recusada."
+    from datetime import datetime
+    req.decided_at = datetime.utcnow()
+    db.commit()
+    audit(db, request, user, "RECUSAR_EXCLUSAO", req.target_type, req.target_id, req.decision_note)
+    return RedirectResponse("/solicitacoes-exclusao", status_code=303)
+
+
+@app.post("/admin/folhas/{folha_id}/delete")
+def admin_delete_folha(request: Request, folha_id: int, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)], csrf_token: str = Form(...)):
+    validate_csrf(request, csrf_token); require_role(user, ["ADMIN"])
+    folha = db.get(Folha, folha_id)
+    if not folha: raise HTTPException(404, "Folha não localizada.")
+    req = DeletionRequest(target_type="FOLHA", target_id=folha.id, folha_id=folha.id, secretaria_id=folha.programa.secretaria_id, requested_by=user.id, status="PENDENTE_ADMIN", reason="Exclusão direta pelo ADM")
+    db.add(req); db.flush()
+    msg = _delete_target(db, req)
+    req.status = "APROVADA"; req.decided_by = user.id; req.decision_note = msg
+    from datetime import datetime
+    req.decided_at = datetime.utcnow()
+    db.commit(); audit(db, request, user, "EXCLUIR_DIRETO", "Folha", folha_id, msg)
+    request.session["flash"] = msg
+    return RedirectResponse("/folhas", status_code=303)
+
+
+@app.post("/admin/usuarios/{usuario_id}/delete")
+def admin_delete_usuario(request: Request, usuario_id: int, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)], csrf_token: str = Form(...)):
+    validate_csrf(request, csrf_token); require_role(user, ["ADMIN"])
+    target = db.get(User, usuario_id)
+    if not target: raise HTTPException(404, "Usuário não localizado.")
+    if target.id == user.id: raise HTTPException(400, "O ADM logado não pode desativar a si próprio.")
+    target.is_active = False
+    db.commit(); audit(db, request, user, "DESATIVAR", "User", target.id, target.username)
+    return RedirectResponse("/usuarios", status_code=303)
+
+
+@app.post("/admin/secretarias/{secretaria_id}/delete")
+def admin_delete_secretaria(request: Request, secretaria_id: int, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)], csrf_token: str = Form(...)):
+    validate_csrf(request, csrf_token); require_role(user, ["ADMIN"])
+    sec = db.get(Secretaria, secretaria_id)
+    if not sec: raise HTTPException(404, "Secretaria não localizada.")
+    has_programa = db.scalar(select(Programa.id).where(Programa.secretaria_id == sec.id))
+    has_ug = db.scalar(select(UnidadeGestora.id).where(UnidadeGestora.secretaria_id == sec.id))
+    if has_programa or has_ug:
+        sec.ativa = False
+        db.commit(); audit(db, request, user, "DESATIVAR", "Secretaria", sec.id, sec.sigla)
+        request.session["flash"] = "Secretaria possui vínculos e foi desativada, preservando histórico."
+    else:
+        db.delete(sec); db.commit(); audit(db, request, user, "EXCLUIR", "Secretaria", secretaria_id)
+    return RedirectResponse("/cadastros", status_code=303)
+
+
+@app.post("/admin/unidades/{unidade_id}/delete")
+def admin_delete_unidade(request: Request, unidade_id: int, db: Annotated[Session, Depends(get_db)], user: Annotated[User, Depends(current_user)], csrf_token: str = Form(...)):
+    validate_csrf(request, csrf_token); require_role(user, ["ADMIN"])
+    ug = db.get(UnidadeGestora, unidade_id)
+    if not ug: raise HTTPException(404, "UG não localizada.")
+    has_programa = db.scalar(select(Programa.id).where(Programa.unidade_id == ug.id))
+    if has_programa:
+        raise HTTPException(400, "Não é possível excluir UG com programas vinculados. Exclua/migre os programas antes.")
+    db.delete(ug); db.commit(); audit(db, request, user, "EXCLUIR", "UnidadeGestora", unidade_id)
+    return RedirectResponse("/cadastros", status_code=303)
 
 
 @app.get("/usuarios", response_class=HTMLResponse)
